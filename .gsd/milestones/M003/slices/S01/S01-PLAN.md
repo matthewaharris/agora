@@ -31,7 +31,7 @@
   - Estimate: 20min
   - Files: agents/extraction-agent/index.ts, agents/extraction-agent/package.json, agents/extraction-agent/.env.example
   - Verify: TypeScript compiles; agent script has register, discover, send('task_request'), on('task_result')
-- [ ] **T03: Wire up npm scripts and verify** — 1. Verify both agent scripts have correct structure
+- [x] **T03: Added agent npm scripts and committed S01** — 1. Verify both agent scripts have correct structure
 2. Update root package.json with agent:research and agent:extraction scripts
 3. Commit all S01 work
   - Estimate: 10min

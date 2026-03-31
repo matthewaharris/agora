@@ -123,6 +123,19 @@ const msgId = await agentB.send(agentAId, 'task_request', {
 
 See `examples/two-agents.ts` for a full two-agent demo.
 
+## Dashboard
+
+A real-time observer dashboard shows the live state of the OACP system.
+
+```bash
+npm run dashboard
+# Open http://localhost:3000
+```
+
+Enter your Supabase URL and anon key to connect. The dashboard shows:
+- **Agent Registry** — live agent cards with status dots, capabilities, and last-seen time
+- **Message Timeline** — chronological feed of all inter-agent messages with type, routing, and payload
+
 ## Tech Stack
 
 - **Backend:** [Supabase](https://supabase.com) (Postgres + Edge Functions + Realtime)

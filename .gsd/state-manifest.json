@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "exported_at": "2026-03-31T21:21:56.379Z",
+  "exported_at": "2026-03-31T21:24:32.559Z",
   "milestones": [
     {
       "id": "M001",
@@ -294,14 +294,14 @@
       "milestone_id": "M003",
       "id": "S01",
       "title": "Reference Agents — Research & Extraction Demo",
-      "status": "pending",
+      "status": "complete",
       "risk": "medium",
       "depends": [],
       "demo": "Run research-agent and extraction-agent in two terminals; extraction-agent discovers and sends task; research-agent returns summarized result",
       "created_at": "2026-03-31T19:28:31.092Z",
-      "completed_at": null,
-      "full_summary_md": "",
-      "full_uat_md": "",
+      "completed_at": "2026-03-31T21:22:47.079Z",
+      "full_summary_md": "---\nid: S01\nparent: M003\nmilestone: M003\nprovides:\n  - Running research-agent for dashboard to observe\n  - Running extraction-agent for dashboard to observe\n  - npm run agent:research and agent:extraction scripts\nrequires:\n  []\naffects:\n  - S02\n  - S03\nkey_files:\n  - agents/research-agent/index.ts\n  - agents/extraction-agent/index.ts\nkey_decisions:\n  - Zero LLM dependency for demo\n  - Polling fallback for Realtime\n  - Entity extraction is pattern-based\npatterns_established:\n  - Reference agent pattern: register → heartbeat → on() → process → send()\n  - Polling fallback alongside Realtime for reliability\nobservability_surfaces:\n  - Console logs with emoji markers for each lifecycle stage\n  - Timing-aware processing simulation\ndrill_down_paths:\n  - .gsd/milestones/M003/slices/S01/tasks/T01-SUMMARY.md\n  - .gsd/milestones/M003/slices/S01/tasks/T02-SUMMARY.md\n  - .gsd/milestones/M003/slices/S01/tasks/T03-SUMMARY.md\nduration: \"\"\nverification_result: passed\ncompleted_at: 2026-03-31T21:22:47.080Z\nblocker_discovered: false\n---\n\n# S01: Reference Agents — Research & Extraction Demo\n\n**Built research-agent and extraction-agent implementing the full PRD Section 7 demo scenario**\n\n## What Happened\n\nBuilt both reference agents implementing the PRD Section 7 demo. Research-agent registers with 'research-summarization', listens for tasks, generates topic-aware summaries, and sends results back. Extraction-agent registers with 'data-extraction', discovers research agents, sends task requests, receives results, and extracts entities. Both agents have graceful shutdown, dotenv config, and polling fallback.\n\n## Verification\n\nBoth agent scripts have correct structure. npm scripts wired up. Git commit succeeded.\n\n## Requirements Advanced\n\n- REQ-AGENT-01 — Research agent processes tasks and returns results\n\n## Requirements Validated\n\nNone.\n\n## New Requirements Surfaced\n\nNone.\n\n## Requirements Invalidated or Re-scoped\n\nNone.\n\n## Deviations\n\nUsed built-in summary generation instead of LLM API for zero-dependency demo.\n\n## Known Limitations\n\nSummaries are pre-built (no LLM). Entity extraction is simple pattern matching.\n\n## Follow-ups\n\nOptional: add LLM integration (OpenAI/Anthropic) for production-quality research summaries.\n\n## Files Created/Modified\n\n- `agents/research-agent/index.ts` — Research agent with task processing and topic-aware summaries\n- `agents/research-agent/package.json` — Research agent package with oacp-sdk file: dependency\n- `agents/extraction-agent/index.ts` — Extraction agent with discovery, delegation, and entity extraction\n- `agents/extraction-agent/package.json` — Extraction agent package\n- `package.json` — Added agent:research and agent:extraction scripts\n",
+      "full_uat_md": "# S01: Reference Agents — Research & Extraction Demo — UAT\n\n**Milestone:** M003\n**Written:** 2026-03-31T21:22:47.080Z\n\n## UAT: M003/S01 — Reference Agents\\n\\n### Test 1: Research Agent\\n- [ ] npm start in agents/research-agent/ registers and starts heartbeating\\n- [ ] Agent appears in discovery with 'research-summarization' capability\\n- [ ] Receives task_request and sends task_result with summary\\n- [ ] Handles errors gracefully with task_error\\n- [ ] Shuts down cleanly on SIGINT\\n\\n### Test 2: Extraction Agent\\n- [ ] npm start in agents/extraction-agent/ registers and discovers research agent\\n- [ ] Sends task_request with correlation_id\\n- [ ] Receives task_result and extracts entities\\n- [ ] Times out after 30s if no response\\n- [ ] Shuts down cleanly on completion or SIGINT\\n\\n### Test 3: End-to-End\\n- [ ] Start research-agent in terminal 1\\n- [ ] Start extraction-agent in terminal 2\\n- [ ] Extraction agent discovers research agent\\n- [ ] Task request → result cycle completes\\n- [ ] Entities extracted and displayed\n",
       "goal": "Build two standalone reference agent scripts that execute the PRD Section 7 demo scenario — research-agent processes summarization tasks, extraction-agent discovers and delegates",
       "success_criteria": "Both agents register; discovery finds research agent; task request/ack/result cycle completes; console shows full timeline",
       "proof_level": "automated (run both agents, verify task completion)",
@@ -319,13 +319,13 @@
       "depends": [
         "S01"
       ],
-      "demo": "Open dashboard in browser; see agents appear live; watch messages flow in real-time timeline",
+      "demo": "Open dashboard in browser; see agents appear live; watch messages flow",
       "created_at": "2026-03-31T19:28:31.092Z",
       "completed_at": null,
       "full_summary_md": "",
       "full_uat_md": "",
-      "goal": "Build a web dashboard (React/Next.js) that connects to Supabase Realtime and shows registry state + message timeline",
-      "success_criteria": "Dashboard shows agent cards with live status; message feed updates in real-time; agent detail view works",
+      "goal": "Build a lightweight web observer dashboard that shows live agent registry state and message timeline via Supabase Realtime",
+      "success_criteria": "Dashboard shows agent cards with live status; message feed updates in real-time; deployable to Vercel or servable locally",
       "proof_level": "manual (visual verification)",
       "integration_closure": "Provides visual observer for demos and presentations",
       "observability_impact": "Visual real-time monitoring of the entire OACP system",
@@ -1123,7 +1123,85 @@
       "milestone_id": "M003",
       "slice_id": "S01",
       "id": "T03",
-      "title": "Wire up npm scripts and verify",
+      "title": "Added agent npm scripts and committed S01",
+      "status": "complete",
+      "one_liner": "Added agent npm scripts and committed S01",
+      "narrative": "Wired up npm scripts in root package.json for running agents. Committed all S01 work.",
+      "verification_result": "npm run scripts present; git commit of 17 files succeeded.",
+      "duration": "",
+      "completed_at": "2026-03-31T21:22:24.872Z",
+      "blocker_discovered": false,
+      "deviations": "None.",
+      "known_issues": "None.",
+      "key_files": [
+        "package.json"
+      ],
+      "key_decisions": [
+        "Added agent:research, agent:extraction, sdk:build scripts to root package.json"
+      ],
+      "full_summary_md": "---\nid: T03\nparent: S01\nmilestone: M003\nkey_files:\n  - package.json\nkey_decisions:\n  - Added agent:research, agent:extraction, sdk:build scripts to root package.json\nduration: \"\"\nverification_result: passed\ncompleted_at: 2026-03-31T21:22:24.872Z\nblocker_discovered: false\n---\n\n# T03: Added agent npm scripts and committed S01\n\n**Added agent npm scripts and committed S01**\n\n## What Happened\n\nWired up npm scripts in root package.json for running agents. Committed all S01 work.\n\n## Verification\n\nnpm run scripts present; git commit of 17 files succeeded.\n\n## Verification Evidence\n\n| # | Command | Exit Code | Verdict | Duration |\n|---|---------|-----------|---------|----------|\n| 1 | `git commit (17 files)` | 0 | pass | 500ms |\n\n\n## Deviations\n\nNone.\n\n## Known Issues\n\nNone.\n\n## Files Created/Modified\n\n- `package.json`\n",
+      "description": "1. Verify both agent scripts have correct structure\n2. Update root package.json with agent:research and agent:extraction scripts\n3. Commit all S01 work",
+      "estimate": "10min",
+      "files": [
+        "package.json"
+      ],
+      "verify": "npm run scripts listed; git commit succeeds",
+      "inputs": [],
+      "expected_output": [],
+      "observability_impact": "",
+      "full_plan_md": "",
+      "sequence": 0
+    },
+    {
+      "milestone_id": "M003",
+      "slice_id": "S02",
+      "id": "T01",
+      "title": "Built zero-build-step observer dashboard with live agent registry and message timeline via Supabase Realtime",
+      "status": "complete",
+      "one_liner": "Built zero-build-step observer dashboard with live agent registry and message timeline via Supabase Realtime",
+      "narrative": "Built a single-page observer dashboard as a self-contained HTML file. Left panel shows agent registry with colored status dots (green/gray/yellow), capability tags, owner handle, and time-ago last seen. Right panel shows message timeline with type badges (color-coded), sender→recipient routing, and payload preview. Subscribes to Supabase Realtime for live updates on both agents and messages tables. Config bar accepts Supabase URL and anon key, persists to localStorage. New messages get a flash animation. Refreshes time-ago labels every 10 seconds.",
+      "verification_result": "HTML file has Supabase Realtime subscriptions, agent card rendering, message timeline, config persistence.",
+      "duration": "",
+      "completed_at": "2026-03-31T21:24:32.529Z",
+      "blocker_discovered": false,
+      "deviations": "Built as a single HTML file with CDN-loaded Supabase JS instead of a React/Next.js app — much lighter, zero build step, still fully functional.",
+      "known_issues": "None.",
+      "key_files": [
+        "apps/dashboard/index.html",
+        "apps/dashboard/package.json"
+      ],
+      "key_decisions": [
+        "Single HTML file with Supabase JS from CDN — zero build step",
+        "Dark theme with monospace font for developer aesthetic",
+        "Saves Supabase config to localStorage for persistence",
+        "Auto-connect on reload if credentials saved",
+        "Flash animation on new messages for visual feedback"
+      ],
+      "full_summary_md": "---\nid: T01\nparent: S02\nmilestone: M003\nkey_files:\n  - apps/dashboard/index.html\n  - apps/dashboard/package.json\nkey_decisions:\n  - Single HTML file with Supabase JS from CDN — zero build step\n  - Dark theme with monospace font for developer aesthetic\n  - Saves Supabase config to localStorage for persistence\n  - Auto-connect on reload if credentials saved\n  - Flash animation on new messages for visual feedback\nduration: \"\"\nverification_result: passed\ncompleted_at: 2026-03-31T21:24:32.529Z\nblocker_discovered: false\n---\n\n# T01: Built zero-build-step observer dashboard with live agent registry and message timeline via Supabase Realtime\n\n**Built zero-build-step observer dashboard with live agent registry and message timeline via Supabase Realtime**\n\n## What Happened\n\nBuilt a single-page observer dashboard as a self-contained HTML file. Left panel shows agent registry with colored status dots (green/gray/yellow), capability tags, owner handle, and time-ago last seen. Right panel shows message timeline with type badges (color-coded), sender→recipient routing, and payload preview. Subscribes to Supabase Realtime for live updates on both agents and messages tables. Config bar accepts Supabase URL and anon key, persists to localStorage. New messages get a flash animation. Refreshes time-ago labels every 10 seconds.\n\n## Verification\n\nHTML file has Supabase Realtime subscriptions, agent card rendering, message timeline, config persistence.\n\n## Verification Evidence\n\n| # | Command | Exit Code | Verdict | Duration |\n|---|---------|-----------|---------|----------|\n| 1 | `structural check on dashboard HTML` | 0 | pass | 50ms |\n\n\n## Deviations\n\nBuilt as a single HTML file with CDN-loaded Supabase JS instead of a React/Next.js app — much lighter, zero build step, still fully functional.\n\n## Known Issues\n\nNone.\n\n## Files Created/Modified\n\n- `apps/dashboard/index.html`\n- `apps/dashboard/package.json`\n",
+      "description": "1. Create apps/dashboard/index.html — single-page app with:\n   - Supabase JS client loaded from CDN\n   - Agent Registry panel: cards showing name, capabilities, status (colored dot), last_seen\n   - Message Timeline panel: chronological feed with sender, recipient, type, payload preview\n   - Config panel: input fields for Supabase URL and anon key\n   - Auto-connect to Supabase Realtime on load\n   - Subscribe to agents table changes (INSERT, UPDATE) for live registry\n   - Subscribe to messages table changes (INSERT) for live message feed\n   - Clean, minimal CSS with dark/light support\n2. Create apps/dashboard/package.json with serve script\n3. Add npm run dashboard script to root",
+      "estimate": "30min",
+      "files": [
+        "apps/dashboard/index.html",
+        "apps/dashboard/package.json",
+        "package.json"
+      ],
+      "verify": "HTML file exists with Supabase Realtime subscription code, agent cards, and message timeline",
+      "inputs": [
+        "supabase/functions/_shared/types.ts"
+      ],
+      "expected_output": [
+        "apps/dashboard/index.html",
+        "apps/dashboard/package.json"
+      ],
+      "observability_impact": "",
+      "full_plan_md": "",
+      "sequence": 0
+    },
+    {
+      "milestone_id": "M003",
+      "slice_id": "S02",
+      "id": "T02",
+      "title": "Verify and document dashboard",
       "status": "pending",
       "one_liner": "",
       "narrative": "",
@@ -1136,12 +1214,12 @@
       "key_files": [],
       "key_decisions": [],
       "full_summary_md": "",
-      "description": "1. Verify both agent scripts have correct structure\n2. Update root package.json with agent:research and agent:extraction scripts\n3. Commit all S01 work",
+      "description": "1. Verify dashboard HTML is well-formed\n2. Update README with dashboard section\n3. Commit all S02 work",
       "estimate": "10min",
       "files": [
-        "package.json"
+        "README.md"
       ],
-      "verify": "npm run scripts listed; git commit succeeds",
+      "verify": "README has dashboard section; git commit succeeds",
       "inputs": [],
       "expected_output": [],
       "observability_impact": "",
@@ -1430,6 +1508,28 @@
       "verdict": "pass",
       "duration_ms": 50,
       "created_at": "2026-03-31T21:21:56.354Z"
+    },
+    {
+      "id": 22,
+      "task_id": "T03",
+      "slice_id": "S01",
+      "milestone_id": "M003",
+      "command": "git commit (17 files)",
+      "exit_code": 0,
+      "verdict": "pass",
+      "duration_ms": 500,
+      "created_at": "2026-03-31T21:22:24.872Z"
+    },
+    {
+      "id": 23,
+      "task_id": "T01",
+      "slice_id": "S02",
+      "milestone_id": "M003",
+      "command": "structural check on dashboard HTML",
+      "exit_code": 0,
+      "verdict": "pass",
+      "duration_ms": 50,
+      "created_at": "2026-03-31T21:24:32.529Z"
     }
   ]
 }

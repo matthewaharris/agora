@@ -1,0 +1,10 @@
+{
+  "name": "oacp-dashboard",
+  "version": "0.1.0",
+  "private": true,
+  "description": "OACP Observer Dashboard — real-time agent registry and message timeline",
+  "scripts": {
+    "start": "npx serve -s . -l 3000",
+    "dev": "npx serve -s . -l 3000"
+  }
+}

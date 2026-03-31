@@ -1,0 +1,553 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>OACP Observer Dashboard</title>
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
+  <style>
+    :root {
+      --bg: #0f1117;
+      --surface: #1a1d27;
+      --border: #2a2d37;
+      --text: #e4e4e7;
+      --text-dim: #71717a;
+      --accent: #6366f1;
+      --green: #22c55e;
+      --yellow: #eab308;
+      --red: #ef4444;
+      --gray: #6b7280;
+    }
+
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      font-family: 'SF Mono', 'Fira Code', 'Consolas', monospace;
+      background: var(--bg);
+      color: var(--text);
+      min-height: 100vh;
+      font-size: 14px;
+    }
+
+    header {
+      padding: 16px 24px;
+      border-bottom: 1px solid var(--border);
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+
+    header h1 {
+      font-size: 18px;
+      font-weight: 600;
+      color: var(--accent);
+    }
+
+    header .status {
+      font-size: 12px;
+      padding: 4px 10px;
+      border-radius: 12px;
+      background: var(--surface);
+      border: 1px solid var(--border);
+    }
+
+    .status.connected { color: var(--green); border-color: var(--green); }
+    .status.disconnected { color: var(--red); border-color: var(--red); }
+
+    /* Config bar */
+    .config-bar {
+      padding: 12px 24px;
+      background: var(--surface);
+      border-bottom: 1px solid var(--border);
+      display: flex;
+      gap: 12px;
+      align-items: center;
+      flex-wrap: wrap;
+    }
+
+    .config-bar label {
+      font-size: 11px;
+      color: var(--text-dim);
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+    }
+
+    .config-bar input {
+      background: var(--bg);
+      border: 1px solid var(--border);
+      color: var(--text);
+      padding: 6px 10px;
+      border-radius: 4px;
+      font-family: inherit;
+      font-size: 13px;
+      width: 300px;
+    }
+
+    .config-bar button {
+      background: var(--accent);
+      color: white;
+      border: none;
+      padding: 6px 16px;
+      border-radius: 4px;
+      font-family: inherit;
+      font-size: 13px;
+      cursor: pointer;
+    }
+
+    .config-bar button:hover { opacity: 0.9; }
+
+    /* Main layout */
+    .main {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 0;
+      height: calc(100vh - 110px);
+    }
+
+    .panel {
+      border-right: 1px solid var(--border);
+      overflow-y: auto;
+    }
+
+    .panel:last-child { border-right: none; }
+
+    .panel-header {
+      padding: 12px 16px;
+      border-bottom: 1px solid var(--border);
+      font-size: 13px;
+      font-weight: 600;
+      color: var(--text-dim);
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+      position: sticky;
+      top: 0;
+      background: var(--bg);
+      z-index: 1;
+      display: flex;
+      justify-content: space-between;
+    }
+
+    .panel-header .count {
+      color: var(--accent);
+      font-weight: normal;
+    }
+
+    /* Agent cards */
+    .agent-card {
+      padding: 12px 16px;
+      border-bottom: 1px solid var(--border);
+      transition: background 0.15s;
+    }
+
+    .agent-card:hover { background: var(--surface); }
+
+    .agent-header {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      margin-bottom: 6px;
+    }
+
+    .status-dot {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      flex-shrink: 0;
+    }
+
+    .status-dot.online { background: var(--green); box-shadow: 0 0 6px var(--green); }
+    .status-dot.offline { background: var(--gray); }
+    .status-dot.busy { background: var(--yellow); box-shadow: 0 0 6px var(--yellow); }
+
+    .agent-name {
+      font-weight: 600;
+      font-size: 14px;
+    }
+
+    .agent-id {
+      color: var(--text-dim);
+      font-size: 11px;
+    }
+
+    .agent-caps {
+      display: flex;
+      gap: 6px;
+      flex-wrap: wrap;
+      margin-top: 4px;
+    }
+
+    .cap-tag {
+      font-size: 11px;
+      padding: 2px 8px;
+      border-radius: 10px;
+      background: rgba(99, 102, 241, 0.15);
+      color: var(--accent);
+      border: 1px solid rgba(99, 102, 241, 0.3);
+    }
+
+    .agent-meta {
+      font-size: 11px;
+      color: var(--text-dim);
+      margin-top: 4px;
+    }
+
+    /* Message timeline */
+    .message-item {
+      padding: 10px 16px;
+      border-bottom: 1px solid var(--border);
+      transition: background 0.15s;
+    }
+
+    .message-item:hover { background: var(--surface); }
+
+    .msg-header {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      margin-bottom: 4px;
+    }
+
+    .msg-type {
+      font-size: 11px;
+      padding: 2px 8px;
+      border-radius: 10px;
+      font-weight: 600;
+    }
+
+    .msg-type.task_request { background: rgba(99, 102, 241, 0.15); color: var(--accent); }
+    .msg-type.task_ack { background: rgba(34, 197, 94, 0.15); color: var(--green); }
+    .msg-type.task_result { background: rgba(34, 197, 94, 0.2); color: var(--green); }
+    .msg-type.task_error { background: rgba(239, 68, 68, 0.15); color: var(--red); }
+
+    .msg-time {
+      font-size: 11px;
+      color: var(--text-dim);
+    }
+
+    .msg-route {
+      font-size: 12px;
+      color: var(--text-dim);
+    }
+
+    .msg-route .arrow { color: var(--accent); margin: 0 4px; }
+
+    .msg-payload {
+      font-size: 12px;
+      color: var(--text-dim);
+      background: var(--surface);
+      padding: 6px 10px;
+      border-radius: 4px;
+      margin-top: 6px;
+      max-height: 80px;
+      overflow: hidden;
+      white-space: pre-wrap;
+      word-break: break-all;
+    }
+
+    /* Empty states */
+    .empty {
+      padding: 40px 16px;
+      text-align: center;
+      color: var(--text-dim);
+      font-size: 13px;
+    }
+
+    .empty .icon { font-size: 32px; margin-bottom: 8px; }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>◉ OACP Observer</h1>
+    <span id="connStatus" class="status disconnected">● Disconnected</span>
+  </header>
+
+  <div class="config-bar">
+    <div>
+      <label>Supabase URL</label><br>
+      <input id="supabaseUrl" placeholder="https://xxx.supabase.co" value="">
+    </div>
+    <div>
+      <label>Anon Key</label><br>
+      <input id="supabaseKey" type="password" placeholder="eyJ..." value="">
+    </div>
+    <button onclick="connect()">Connect</button>
+  </div>
+
+  <div class="main">
+    <!-- Agent Registry Panel -->
+    <div class="panel">
+      <div class="panel-header">
+        <span>Agent Registry</span>
+        <span class="count" id="agentCount">0 agents</span>
+      </div>
+      <div id="agentList">
+        <div class="empty">
+          <div class="icon">🤖</div>
+          Connect to Supabase to see registered agents
+        </div>
+      </div>
+    </div>
+
+    <!-- Message Timeline Panel -->
+    <div class="panel">
+      <div class="panel-header">
+        <span>Message Timeline</span>
+        <span class="count" id="msgCount">0 messages</span>
+      </div>
+      <div id="messageList">
+        <div class="empty">
+          <div class="icon">💬</div>
+          Messages will appear here in real-time
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    // ============================================================
+    // State
+    // ============================================================
+    let supabase = null;
+    let agents = new Map();
+    let messages = [];
+    let channel = null;
+
+    // Try to load config from localStorage
+    const savedUrl = localStorage.getItem('oacp_supabase_url') || '';
+    const savedKey = localStorage.getItem('oacp_supabase_key') || '';
+    document.getElementById('supabaseUrl').value = savedUrl;
+    document.getElementById('supabaseKey').value = savedKey;
+
+    // Auto-connect if saved
+    if (savedUrl && savedKey) {
+      setTimeout(() => connect(), 500);
+    }
+
+    // ============================================================
+    // Connection
+    // ============================================================
+    async function connect() {
+      const url = document.getElementById('supabaseUrl').value.trim();
+      const key = document.getElementById('supabaseKey').value.trim();
+
+      if (!url || !key) {
+        alert('Please enter Supabase URL and Anon Key');
+        return;
+      }
+
+      // Save to localStorage
+      localStorage.setItem('oacp_supabase_url', url);
+      localStorage.setItem('oacp_supabase_key', key);
+
+      try {
+        // Initialize Supabase client
+        supabase = window.supabase.createClient(url, key);
+
+        // Load existing data
+        await loadAgents();
+        await loadMessages();
+
+        // Subscribe to Realtime changes
+        subscribeToChanges();
+
+        setConnected(true);
+      } catch (err) {
+        console.error('Connection failed:', err);
+        setConnected(false);
+        alert('Connection failed: ' + err.message);
+      }
+    }
+
+    function setConnected(connected) {
+      const el = document.getElementById('connStatus');
+      if (connected) {
+        el.textContent = '● Connected';
+        el.className = 'status connected';
+      } else {
+        el.textContent = '● Disconnected';
+        el.className = 'status disconnected';
+      }
+    }
+
+    // ============================================================
+    // Data Loading
+    // ============================================================
+    async function loadAgents() {
+      const { data, error } = await supabase
+        .from('agents')
+        .select('*')
+        .order('created_at', { ascending: false });
+
+      if (error) throw error;
+
+      agents.clear();
+      for (const agent of data || []) {
+        agents.set(agent.agent_id, agent);
+      }
+      renderAgents();
+    }
+
+    async function loadMessages() {
+      const { data, error } = await supabase
+        .from('messages')
+        .select('*')
+        .order('created_at', { ascending: false })
+        .limit(100);
+
+      if (error) throw error;
+      messages = data || [];
+      renderMessages();
+    }
+
+    // ============================================================
+    // Realtime Subscriptions
+    // ============================================================
+    function subscribeToChanges() {
+      if (channel) {
+        supabase.removeChannel(channel);
+      }
+
+      channel = supabase
+        .channel('oacp-dashboard')
+        .on('postgres_changes', {
+          event: '*',
+          schema: 'public',
+          table: 'agents',
+        }, (payload) => {
+          if (payload.eventType === 'INSERT' || payload.eventType === 'UPDATE') {
+            agents.set(payload.new.agent_id, payload.new);
+          } else if (payload.eventType === 'DELETE') {
+            agents.delete(payload.old.agent_id);
+          }
+          renderAgents();
+        })
+        .on('postgres_changes', {
+          event: 'INSERT',
+          schema: 'public',
+          table: 'messages',
+        }, (payload) => {
+          messages.unshift(payload.new);
+          if (messages.length > 200) messages.pop();
+          renderMessages();
+          // Flash effect
+          setTimeout(() => {
+            const first = document.querySelector('.message-item');
+            if (first) first.style.background = 'rgba(99, 102, 241, 0.1)';
+            setTimeout(() => { if (first) first.style.background = ''; }, 1000);
+          }, 50);
+        })
+        .subscribe((status) => {
+          setConnected(status === 'SUBSCRIBED');
+        });
+    }
+
+    // ============================================================
+    // Rendering
+    // ============================================================
+    function renderAgents() {
+      const container = document.getElementById('agentList');
+      const countEl = document.getElementById('agentCount');
+      const agentArray = Array.from(agents.values());
+
+      countEl.textContent = `${agentArray.length} agent${agentArray.length !== 1 ? 's' : ''}`;
+
+      if (agentArray.length === 0) {
+        container.innerHTML = `<div class="empty"><div class="icon">🤖</div>No agents registered yet</div>`;
+        return;
+      }
+
+      // Sort: online first, then by name
+      agentArray.sort((a, b) => {
+        if (a.status === 'online' && b.status !== 'online') return -1;
+        if (a.status !== 'online' && b.status === 'online') return 1;
+        return a.name.localeCompare(b.name);
+      });
+
+      container.innerHTML = agentArray.map(agent => {
+        const caps = (agent.capabilities || [])
+          .map(c => `<span class="cap-tag">${esc(c)}</span>`)
+          .join('');
+
+        const lastSeen = agent.last_seen_at
+          ? timeAgo(new Date(agent.last_seen_at))
+          : 'never';
+
+        return `
+          <div class="agent-card">
+            <div class="agent-header">
+              <span class="status-dot ${agent.status}"></span>
+              <span class="agent-name">${esc(agent.name)}</span>
+              <span class="agent-id">${agent.agent_id.substring(0, 8)}...</span>
+            </div>
+            <div class="agent-caps">${caps}</div>
+            <div class="agent-meta">
+              ${agent.owner_handle ? `@${esc(agent.owner_handle)} · ` : ''}
+              ${agent.status} · last seen ${lastSeen}
+            </div>
+          </div>
+        `;
+      }).join('');
+    }
+
+    function renderMessages() {
+      const container = document.getElementById('messageList');
+      const countEl = document.getElementById('msgCount');
+
+      countEl.textContent = `${messages.length} message${messages.length !== 1 ? 's' : ''}`;
+
+      if (messages.length === 0) {
+        container.innerHTML = `<div class="empty"><div class="icon">💬</div>No messages yet</div>`;
+        return;
+      }
+
+      container.innerHTML = messages.map(msg => {
+        const senderName = getAgentName(msg.sender_agent_id);
+        const recipientName = getAgentName(msg.recipient_agent_id);
+        const time = new Date(msg.created_at).toLocaleTimeString();
+        const payloadPreview = JSON.stringify(msg.payload || {}).substring(0, 200);
+
+        return `
+          <div class="message-item">
+            <div class="msg-header">
+              <span class="msg-type ${msg.message_type}">${msg.message_type}</span>
+              <span class="msg-time">${time}</span>
+            </div>
+            <div class="msg-route">
+              ${esc(senderName)} <span class="arrow">→</span> ${esc(recipientName)}
+            </div>
+            <div class="msg-payload">${esc(payloadPreview)}</div>
+          </div>
+        `;
+      }).join('');
+    }
+
+    // ============================================================
+    // Helpers
+    // ============================================================
+    function getAgentName(agentId) {
+      const agent = agents.get(agentId);
+      return agent ? agent.name : agentId?.substring(0, 8) + '...';
+    }
+
+    function timeAgo(date) {
+      const seconds = Math.floor((new Date() - date) / 1000);
+      if (seconds < 5) return 'just now';
+      if (seconds < 60) return `${seconds}s ago`;
+      if (seconds < 3600) return `${Math.floor(seconds / 60)}m ago`;
+      if (seconds < 86400) return `${Math.floor(seconds / 3600)}h ago`;
+      return `${Math.floor(seconds / 86400)}d ago`;
+    }
+
+    function esc(str) {
+      const div = document.createElement('div');
+      div.textContent = str || '';
+      return div.innerHTML;
+    }
+
+    // Refresh time-ago labels every 10 seconds
+    setInterval(() => {
+      if (agents.size > 0) renderAgents();
+    }, 10000);
+  </script>
+</body>
+</html>
