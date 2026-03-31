@@ -11,6 +11,7 @@
     "agent:research": "cd agents/research-agent && npm start",
     "agent:extraction": "cd agents/extraction-agent && npm start",
     "dashboard": "cd apps/dashboard && npx serve -s . -l 3000",
+    "demo": "bash scripts/demo.sh",
     "sdk:build": "cd packages/oacp-sdk && npm run build",
     "lint": "npm run lint --workspaces --if-present",
     "build": "npm run build --workspaces --if-present",

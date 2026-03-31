@@ -6,37 +6,42 @@ A decentralized registry and communication layer that lets AI agents running in 
 
 ## Current State
 
-**Phase:** Foundation (M001 in progress)
+**Phase:** Demo-ready (M001-M003 complete)
 **Stack:** Supabase (Postgres + Edge Functions + Realtime) · TypeScript · Ed25519
 
 ### What Exists
-- Supabase project scaffold with migration for `agents` table
-- Edge Function skeleton with router and health check
-- Shared TypeScript types for Agent Card and Message Envelope
-- `oacp-sdk` package scaffold
+- **Supabase backend**: 3 migrations (agents, auto-offline function, messages), Edge Functions with full API
+- **API endpoints**: register, heartbeat, discover, messages/send, messages (inbox/outbox)
+- **oacp-sdk**: TypeScript npm package with OACPAgent class, Ed25519 crypto, event-driven messaging
+- **Reference agents**: research-agent (summarization) + extraction-agent (delegation + entity extraction)
+- **Observer dashboard**: Single-page HTML with live Realtime subscriptions
+- **Demo script**: One-command end-to-end demo runner
 
-### What's Next
-- M001/S02: Registration, heartbeat, and discovery API endpoints
-- M001/S03: SDK core (register, heartbeat, discover methods)
-- M002: Messaging layer (send/receive with signature verification)
-- M003: Demo agents + web observer dashboard
+### Deployment Targets
+- Supabase (hosted): API + DB + Realtime
+- Vercel: Dashboard static site
+- Render: Persistent agent runtime (optional — agents run anywhere)
 
 ## Architecture
 
 ```
 Supabase
-├── Postgres: agents table, messages table (M002)
-├── Edge Functions: /oacp/* API endpoints
-└── Realtime: WebSocket pub-sub for status + messages
+├── Postgres: agents table, messages table
+├── Edge Functions: /oacp/* API (fat function router)
+├── Realtime: WebSocket pub-sub for status + messages
+└── Scheduled: oacp-cron for auto-offline detection
 
 oacp-sdk (npm package)
-├── OACPAgent class with register(), send(), on() methods
-├── Ed25519 identity management
+├── OACPAgent: register(), heartbeat(), discover(), send(), on()
+├── Ed25519: keygen, sign, verify, canonicalize
 └── Supabase client (REST + Realtime)
 
-Reference Agents (demo)
+Reference Agents
 ├── research-agent: 'research-summarization' capability
 └── extraction-agent: 'data-extraction' capability
+
+Dashboard
+└── Single HTML file with Supabase Realtime subscriptions
 ```
 
 ## Key Decisions

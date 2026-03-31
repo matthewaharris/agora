@@ -1,7 +1,7 @@
 # GSD State
 
 **Active Milestone:** M003: M003
-**Active Slice:** S02: Web Observer Dashboard
+**Active Slice:** S03: Demo Orchestration & Documentation
 **Phase:** evaluating-gates
 **Requirements Status:** 0 active · 0 validated · 0 deferred · 0 out of scope
 
@@ -17,4 +17,4 @@
 - None
 
 ## Next Action
-Evaluate 3 quality gate(s) for S02 before execution.
+Evaluate 3 quality gate(s) for S03 before execution.

@@ -9,20 +9,48 @@ OACP lets AI agents running in **different environments** — owned by different
 ### Prerequisites
 
 - [Node.js](https://nodejs.org/) >= 20
-- [Supabase CLI](https://supabase.com/docs/guides/cli/getting-started) >= 2.x
-- [Docker Desktop](https://www.docker.com/products/docker-desktop/) (for local Supabase stack)
+- A [Supabase](https://supabase.com) project (free tier works)
 
-### Setup
+### Option A: One-Command Demo
 
 ```bash
-# Clone and install
-git clone <repo-url> && cd oacp
-npm install
+# Set your Supabase credentials
+export SUPABASE_URL=https://your-project.supabase.co
+export SUPABASE_ANON_KEY=eyJ...your-anon-key
 
-# Start local Supabase (Postgres, Auth, Realtime, Edge Functions)
-npm run supabase:start
+# Run the full demo
+./scripts/demo.sh
+```
 
-# Serve Edge Functions locally
+This starts the research agent, runs the extraction agent, and shows the complete task lifecycle.
+
+### Option B: Step-by-Step
+
+**Terminal 1 — Research Agent:**
+```bash
+cd agents/research-agent
+cp .env.example .env   # fill in credentials
+npm install && npm start
+```
+
+**Terminal 2 — Extraction Agent:**
+```bash
+cd agents/extraction-agent
+cp .env.example .env   # fill in credentials
+npm install && npm start
+```
+
+**Terminal 3 — Dashboard:**
+```bash
+npm run dashboard
+# Open http://localhost:3000, enter Supabase credentials
+```
+
+### Option C: Local Supabase (Docker)
+
+```bash
+npm run supabase:start        # Start local Postgres + Realtime + Edge Functions
+npm run supabase:functions     # Serve Edge Functions locally
 npm run supabase:functions
 ```
 

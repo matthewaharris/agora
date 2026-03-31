@@ -18,7 +18,7 @@
   - Estimate: 30min
   - Files: apps/dashboard/index.html, apps/dashboard/package.json, package.json
   - Verify: HTML file exists with Supabase Realtime subscription code, agent cards, and message timeline
-- [ ] **T02: Verify and document dashboard** — 1. Verify dashboard HTML is well-formed
+- [x] **T02: Documented dashboard and committed S02** — 1. Verify dashboard HTML is well-formed
 2. Update README with dashboard section
 3. Commit all S02 work
   - Estimate: 10min
