@@ -26,6 +26,7 @@ import {
   loadOrCreateKeypair,
   signMessage,
   verifySignature,
+  canonicalizeMessage,
   type OACPKeypair,
 } from './crypto.js';
 import type {
@@ -34,6 +35,8 @@ import type {
   HeartbeatResponse,
   DiscoverQuery,
   DiscoverResponse,
+  MessageType,
+  MessageEnvelope,
   AgentCard,
   ApiError,
 } from './types.js';
@@ -46,6 +49,14 @@ export class OACPAgent {
   private heartbeatTimer: ReturnType<typeof setInterval> | null = null;
   private apiBaseUrl: string;
   private registered = false;
+
+  // Messaging — event handlers and Realtime subscription
+  // deno-lint-ignore no-explicit-any
+  private messageHandlers: Map<string, Array<(msg: any) => void>> = new Map();
+  // deno-lint-ignore no-explicit-any
+  private realtimeChannel: any = null;
+  // deno-lint-ignore no-explicit-any
+  private supabaseClient: any = null;
 
   constructor(config: AgentConfig) {
     this.config = config;
@@ -271,6 +282,250 @@ export class OACPAgent {
   }
 
   // ============================================================
+  // Messaging
+  // ============================================================
+
+  /**
+   * Send a message to another agent.
+   *
+   * Composes the OACP Message Envelope, signs it with this agent's
+   * Ed25519 key, and POSTs to the registry message bus.
+   *
+   * @param recipientId - Target agent's agent_id
+   * @param messageType - Message type (task_request, task_ack, task_result, task_error)
+   * @param payload - Message payload object
+   * @param options - Optional correlation_id and sequence
+   * @returns The message_id assigned by the registry
+   */
+  async send(
+    recipientId: string,
+    messageType: MessageType,
+    payload: Record<string, unknown>,
+    options?: { correlationId?: string; sequence?: number },
+  ): Promise<string> {
+    if (!this.agentId || !this.registryToken) {
+      throw new Error('Agent must be registered before sending messages');
+    }
+
+    // Canonicalize and sign
+    const canonical = canonicalizeMessage({
+      sender_agent_id: this.agentId,
+      recipient_agent_id: recipientId,
+      message_type: messageType,
+      payload,
+      correlation_id: options?.correlationId,
+      sequence: options?.sequence,
+    });
+
+    const signature = signMessage(canonical, this.keypair.secretKey);
+
+    const body: Record<string, unknown> = {
+      sender_agent_id: this.agentId,
+      recipient_agent_id: recipientId,
+      message_type: messageType,
+      payload,
+      signature,
+    };
+
+    if (options?.correlationId) body.correlation_id = options.correlationId;
+    if (options?.sequence !== undefined) body.sequence = options.sequence;
+
+    const response = await fetch(`${this.apiBaseUrl}/messages/send`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${this.registryToken}`,
+      },
+      body: JSON.stringify(body),
+    });
+
+    if (!response.ok) {
+      const error = (await response.json()) as ApiError;
+      throw new Error(`Send failed (${response.status}): ${error.error}`);
+    }
+
+    // deno-lint-ignore no-explicit-any
+    const result = (await response.json()) as any;
+    console.log(
+      `[OACP] Sent ${messageType} to ${recipientId.substring(0, 8)}... (msg: ${result.message_id})`,
+    );
+    return result.message_id;
+  }
+
+  /**
+   * Get messages for this agent from the registry.
+   *
+   * @param options - Filter options (direction, messageType, correlationId, since, limit)
+   */
+  async getMessages(options: {
+    direction?: 'inbox' | 'outbox';
+    messageType?: MessageType;
+    correlationId?: string;
+    since?: string;
+    limit?: number;
+  } = {}): Promise<{ messages: MessageEnvelope[]; total: number }> {
+    if (!this.agentId || !this.registryToken) {
+      throw new Error('Agent must be registered before retrieving messages');
+    }
+
+    const params = new URLSearchParams();
+    params.set('agent_id', this.agentId);
+    if (options.direction) params.set('direction', options.direction);
+    if (options.messageType) params.set('message_type', options.messageType);
+    if (options.correlationId) params.set('correlation_id', options.correlationId);
+    if (options.since) params.set('since', options.since);
+    if (options.limit) params.set('limit', String(options.limit));
+
+    const response = await fetch(
+      `${this.apiBaseUrl}/messages?${params.toString()}`,
+      {
+        method: 'GET',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${this.registryToken}`,
+        },
+      },
+    );
+
+    if (!response.ok) {
+      const error = (await response.json()) as ApiError;
+      throw new Error(`Get messages failed (${response.status}): ${error.error}`);
+    }
+
+    // deno-lint-ignore no-explicit-any
+    const result = (await response.json()) as any;
+    return {
+      messages: result.messages as MessageEnvelope[],
+      total: result.total as number,
+    };
+  }
+
+  /**
+   * Register an event handler for incoming messages.
+   *
+   * Uses Supabase Realtime to subscribe to the messages table,
+   * filtering for messages addressed to this agent.
+   *
+   * @param eventType - Message type to listen for, or '*' for all
+   * @param handler - Callback receiving the message envelope
+   */
+  on(
+    eventType: MessageType | '*',
+    handler: (msg: MessageEnvelope) => void,
+  ): void {
+    const handlers = this.messageHandlers.get(eventType) || [];
+    handlers.push(handler);
+    this.messageHandlers.set(eventType, handlers);
+
+    // Start Realtime subscription if not already running
+    if (!this.realtimeChannel) {
+      this.startRealtimeSubscription();
+    }
+  }
+
+  /**
+   * Remove event handlers for a message type.
+   */
+  off(eventType: MessageType | '*'): void {
+    this.messageHandlers.delete(eventType);
+
+    // If no handlers left, unsubscribe from Realtime
+    if (this.messageHandlers.size === 0 && this.realtimeChannel) {
+      this.stopRealtimeSubscription();
+    }
+  }
+
+  /**
+   * Start Supabase Realtime subscription for incoming messages.
+   * @private
+   */
+  private startRealtimeSubscription(): void {
+    if (!this.agentId) return;
+
+    try {
+      // Lazy-import createClient to avoid requiring @supabase/supabase-js at import time
+      const { createClient } = require('@supabase/supabase-js');
+
+      if (!this.supabaseClient) {
+        this.supabaseClient = createClient(
+          this.config.supabaseUrl,
+          this.config.supabaseAnonKey,
+        );
+      }
+
+      const channelName = `oacp-messages-${this.agentId}`;
+      this.realtimeChannel = this.supabaseClient
+        .channel(channelName)
+        .on(
+          'postgres_changes',
+          {
+            event: 'INSERT',
+            schema: 'public',
+            table: 'messages',
+            filter: `recipient_agent_id=eq.${this.agentId}`,
+          },
+          // deno-lint-ignore no-explicit-any
+          (payload: any) => {
+            const msg = payload.new as MessageEnvelope;
+            this.dispatchMessage(msg);
+          },
+        )
+        .subscribe((status: string) => {
+          if (status === 'SUBSCRIBED') {
+            console.log(`[OACP] Realtime subscription active for ${this.agentId}`);
+          }
+        });
+    } catch (err) {
+      console.warn(
+        '[OACP] Supabase Realtime not available — use getMessages() for polling instead',
+        err instanceof Error ? err.message : err,
+      );
+    }
+  }
+
+  /**
+   * Stop Realtime subscription.
+   * @private
+   */
+  private stopRealtimeSubscription(): void {
+    if (this.realtimeChannel && this.supabaseClient) {
+      this.supabaseClient.removeChannel(this.realtimeChannel);
+      this.realtimeChannel = null;
+      console.log('[OACP] Realtime subscription stopped');
+    }
+  }
+
+  /**
+   * Dispatch an incoming message to registered handlers.
+   * @private
+   */
+  private dispatchMessage(msg: MessageEnvelope): void {
+    console.log(
+      `[OACP] Received ${msg.message_type} from ${msg.sender_agent_id?.substring(0, 8)}...`,
+    );
+
+    // Dispatch to type-specific handlers
+    const typeHandlers = this.messageHandlers.get(msg.message_type) || [];
+    for (const handler of typeHandlers) {
+      try {
+        handler(msg);
+      } catch (err) {
+        console.error(`[OACP] Handler error for ${msg.message_type}:`, err);
+      }
+    }
+
+    // Dispatch to wildcard handlers
+    const wildcardHandlers = this.messageHandlers.get('*') || [];
+    for (const handler of wildcardHandlers) {
+      try {
+        handler(msg);
+      } catch (err) {
+        console.error('[OACP] Wildcard handler error:', err);
+      }
+    }
+  }
+
+  // ============================================================
   // Crypto Utilities (exposed for message signing in M002)
   // ============================================================
 
@@ -299,6 +554,8 @@ export class OACPAgent {
    */
   async shutdown(): Promise<void> {
     this.stopHeartbeat();
+    this.stopRealtimeSubscription();
+    this.messageHandlers.clear();
     console.log(`[OACP] Agent "${this.config.name}" shut down`);
   }
 }

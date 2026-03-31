@@ -102,6 +102,27 @@ await agent.shutdown();
 
 See `examples/basic-agent.ts` for a complete working example.
 
+### Messaging
+
+```typescript
+// Agent A listens for tasks
+agentA.on('task_request', async (msg) => {
+  console.log('Received task:', msg.payload.task);
+
+  // Process and send result back
+  await agentA.send(msg.sender_agent_id, 'task_result', {
+    summary: 'Here is the research summary...',
+  }, { correlationId: msg.correlation_id });
+});
+
+// Agent B sends a task to Agent A
+const msgId = await agentB.send(agentAId, 'task_request', {
+  task: 'Summarize open agent protocols',
+});
+```
+
+See `examples/two-agents.ts` for a full two-agent demo.
+
 ## Tech Stack
 
 - **Backend:** [Supabase](https://supabase.com) (Postgres + Edge Functions + Realtime)

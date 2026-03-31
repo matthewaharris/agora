@@ -36,7 +36,7 @@
   - Estimate: 30min
   - Files: supabase/functions/oacp/index.ts, supabase/functions/_shared/crypto.ts
   - Verify: Structural check: handler validates, verifies sig, inserts, returns message_id
-- [ ] **T03: Update integration test script and commit** — 1. Add message endpoint tests to scripts/test-api.sh:
+- [x] **T03: Extended test script with messaging tests (11-14) and committed all S01 work** — 1. Add message endpoint tests to scripts/test-api.sh:
    - Send a task_request between two registered agents
    - Verify message appears in GET /messages for recipient
    - Verify invalid signature is rejected

@@ -68,6 +68,33 @@ export function generateKeypair(): OACPKeypair {
 // ============================================================
 
 /**
+ * Create a canonical string representation of a message for signing/verification.
+ * This MUST match the Edge Function's canonicalizeMessage exactly.
+ *
+ * Canonical format: JSON.stringify with alphabetically sorted keys (excluding signature).
+ */
+export function canonicalizeMessage(fields: {
+  sender_agent_id: string;
+  recipient_agent_id: string;
+  message_type: string;
+  payload: Record<string, unknown>;
+  correlation_id?: string;
+  sequence?: number;
+  timestamp?: string;
+}): string {
+  const canonical: Record<string, unknown> = {};
+  if (fields.correlation_id !== undefined) canonical.correlation_id = fields.correlation_id;
+  canonical.message_type = fields.message_type;
+  canonical.payload = fields.payload;
+  canonical.recipient_agent_id = fields.recipient_agent_id;
+  canonical.sender_agent_id = fields.sender_agent_id;
+  if (fields.sequence !== undefined) canonical.sequence = fields.sequence;
+  if (fields.timestamp !== undefined) canonical.timestamp = fields.timestamp;
+
+  return JSON.stringify(canonical);
+}
+
+/**
  * Sign a message string with an Ed25519 secret key.
  * Returns the signature as a hex string.
  */

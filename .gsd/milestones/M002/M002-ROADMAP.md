@@ -6,5 +6,5 @@ Complete the communication layer: agents can send structured, signed messages to
 ## Slice Overview
 | ID | Slice | Risk | Depends | Done | After this |
 |----|-------|------|---------|------|------------|
-| S01 | Messages Table & Send Endpoint | medium | — | ⬜ | curl POST to /oacp/messages/send stores message and triggers Realtime event visible in Supabase dashboard |
+| S01 | Messages Table & Send Endpoint | medium | — | ✅ | curl POST to /oacp/messages/send stores message and triggers Realtime event visible in Supabase dashboard |
 | S02 | SDK Messaging — send(), on(), Signature Verification | medium | S01 | ⬜ | Two agent scripts exchange a task_request/task_result cycle using agent.send() and agent.on() |

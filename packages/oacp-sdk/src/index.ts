@@ -36,6 +36,7 @@ export {
   generateKeypair,
   signMessage,
   verifySignature,
+  canonicalizeMessage,
   loadOrCreateKeypair,
   toHex,
   fromHex,
