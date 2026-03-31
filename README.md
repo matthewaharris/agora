@@ -69,7 +69,8 @@ oacp/
 | `POST` | `/oacp/register` | ✅ Implemented | Register an agent |
 | `POST` | `/oacp/heartbeat` | ✅ Implemented | Send heartbeat |
 | `GET` | `/oacp/discover` | ✅ Implemented | Discover agents |
-| `POST` | `/oacp/messages/send` | 🚧 M002 | Send message |
+| `POST` | `/oacp/messages/send` | ✅ Implemented | Send message |
+| `GET` | `/oacp/messages` | ✅ Implemented | Get messages (inbox/outbox) |
 
 ## SDK Usage
 

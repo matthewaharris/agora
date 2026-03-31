@@ -265,6 +265,107 @@ if [ -n "$AGENT_A_ID" ] && [ -n "$TOKEN_A" ]; then
 fi
 
 # =============================================================================
+# Test 11: Send a message (task_request)
+# =============================================================================
+info "Test 11: Send message (task_request)"
+
+if [ -n "$AGENT_A_ID" ] && [ -n "$AGENT_B_ID" ] && [ -n "$TOKEN_B" ]; then
+  # Agent B sends a task_request to Agent A
+  # Note: signature verification requires a real Ed25519 signature.
+  # For this test, we check the endpoint accepts a well-formed request
+  # and rejects an invalid signature.
+
+  # First, test with invalid signature (should fail with 403)
+  BAD_SIG_MSG=$(curl -s -X POST "${BASE_URL}/messages/send" \
+    -H "Content-Type: application/json" \
+    -H "Authorization: Bearer ${TOKEN_B}" \
+    -d "{
+      \"sender_agent_id\": \"${AGENT_B_ID}\",
+      \"recipient_agent_id\": \"${AGENT_A_ID}\",
+      \"message_type\": \"task_request\",
+      \"payload\": {\"task\": \"Summarize OACP protocols\"},
+      \"signature\": \"deadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef\"
+    }")
+
+  if echo "$BAD_SIG_MSG" | grep -qi 'signature'; then
+    pass "POST /messages/send rejects invalid signature"
+  else
+    fail "POST /messages/send sig check" "Expected signature error, got: $BAD_SIG_MSG"
+  fi
+fi
+
+# =============================================================================
+# Test 12: Send message validation errors
+# =============================================================================
+info "Test 12: Message validation errors"
+
+# Missing required fields
+MSG_VAL=$(curl -s -X POST "${BASE_URL}/messages/send" \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer fake-token" \
+  -d '{"message_type": "task_request"}')
+
+if echo "$MSG_VAL" | grep -q '"error"'; then
+  pass "POST /messages/send rejects missing fields"
+else
+  fail "POST /messages/send validation" "Should reject: $MSG_VAL"
+fi
+
+# Invalid message_type
+MSG_TYPE=$(curl -s -X POST "${BASE_URL}/messages/send" \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer fake-token" \
+  -d "{
+    \"sender_agent_id\": \"00000000-0000-0000-0000-000000000000\",
+    \"recipient_agent_id\": \"00000000-0000-0000-0000-000000000000\",
+    \"message_type\": \"invalid_type\",
+    \"signature\": \"abc123\"
+  }")
+
+if echo "$MSG_TYPE" | grep -q '"error"'; then
+  pass "POST /messages/send rejects invalid message_type"
+else
+  fail "POST /messages/send type check" "Should reject invalid type: $MSG_TYPE"
+fi
+
+# =============================================================================
+# Test 13: Unknown recipient
+# =============================================================================
+info "Test 13: Unknown recipient"
+
+if [ -n "$AGENT_B_ID" ] && [ -n "$TOKEN_B" ]; then
+  UNKNOWN_RECIP=$(curl -s -X POST "${BASE_URL}/messages/send" \
+    -H "Content-Type: application/json" \
+    -H "Authorization: Bearer ${TOKEN_B}" \
+    -d "{
+      \"sender_agent_id\": \"${AGENT_B_ID}\",
+      \"recipient_agent_id\": \"00000000-0000-0000-0000-000000000099\",
+      \"message_type\": \"task_request\",
+      \"payload\": {},
+      \"signature\": \"aabbccdd\"
+    }")
+
+  if echo "$UNKNOWN_RECIP" | grep -qi 'not found'; then
+    pass "POST /messages/send rejects unknown recipient"
+  else
+    fail "POST /messages/send unknown recipient" "Expected not found: $UNKNOWN_RECIP"
+  fi
+fi
+
+# =============================================================================
+# Test 14: Get messages (requires auth)
+# =============================================================================
+info "Test 14: Get messages"
+
+# Without auth
+NO_AUTH_MSGS=$(curl -s "${BASE_URL}/messages?agent_id=${AGENT_A_ID:-none}")
+if echo "$NO_AUTH_MSGS" | grep -q '"error"'; then
+  pass "GET /messages requires auth"
+else
+  fail "GET /messages auth" "Should require auth: $NO_AUTH_MSGS"
+fi
+
+# =============================================================================
 # Summary
 # =============================================================================
 echo ""
