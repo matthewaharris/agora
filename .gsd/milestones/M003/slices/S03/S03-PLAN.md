@@ -4,7 +4,7 @@
 **Demo:** After this: git clone, npm install, add env vars, npm run demo — full system running
 
 ## Tasks
-- [ ] **T01: Demo script and final documentation** — 1. Create scripts/demo.sh that:
+- [x] **T01: Created one-command demo script and comprehensive README with three quick-start paths** — 1. Create scripts/demo.sh that:
    - Checks prerequisites (node, supabase CLI)
    - Builds the SDK
    - Installs agent dependencies
