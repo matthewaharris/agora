@@ -23,7 +23,7 @@
   - Estimate: 30min
   - Files: packages/oacp-sdk/src/agent.ts, packages/oacp-sdk/src/crypto.ts, packages/oacp-sdk/src/index.ts
   - Verify: tsc --noEmit passes; send/on/getMessages methods present in agent.ts
-- [ ] **T02: Build verification, two-agent example, and documentation** — 1. Run tsc --noEmit to verify zero errors
+- [x] **T02: Created two-agent demo example and updated README with messaging docs** — 1. Run tsc --noEmit to verify zero errors
 2. Run tsc to build dist/
 3. Update examples/basic-agent.ts to show messaging
 4. Create examples/two-agents.ts showing full two-agent demo flow

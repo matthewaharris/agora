@@ -1,14 +1,14 @@
 # GSD State
 
-**Active Milestone:** M002: M002
-**Active Slice:** S02: SDK Messaging — send(), on(), Signature Verification
-**Phase:** evaluating-gates
+**Active Milestone:** M003: M003
+**Active Slice:** S01: Reference Agents — Research & Extraction Demo
+**Phase:** planning
 **Requirements Status:** 0 active · 0 validated · 0 deferred · 0 out of scope
 
 ## Milestone Registry
 - ✅ **M001:** M001: Foundation — Supabase Schema, Edge Functions API & OACP-SDK Core
-- 🔄 **M002:** M002
-- ⬜ **M003:** M003
+- ✅ **M002:** M002: Messaging — Message Envelope, Realtime Delivery & SDK Messaging API
+- 🔄 **M003:** M003
 
 ## Recent Decisions
 - None recorded
@@ -17,4 +17,4 @@
 - None
 
 ## Next Action
-Evaluate 3 quality gate(s) for S02 before execution.
+Slice S01 has a plan file but no tasks. Add tasks to the plan.
