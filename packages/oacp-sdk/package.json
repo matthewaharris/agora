@@ -1,0 +1,21 @@
+{
+  "name": "oacp-sdk",
+  "version": "0.1.0",
+  "description": "TypeScript SDK for the Open Agent Communication Protocol",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "scripts": {
+    "build": "tsc",
+    "lint": "tsc --noEmit",
+    "test": "echo \"Tests pending\" && exit 0"
+  },
+  "keywords": ["oacp", "agent", "protocol", "sdk"],
+  "license": "MIT",
+  "dependencies": {
+    "@noble/ed25519": "^3.0.0",
+    "@supabase/supabase-js": "^2.49.0"
+  },
+  "devDependencies": {
+    "typescript": "^5.7.0"
+  }
+}

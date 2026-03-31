@@ -1,0 +1,31 @@
+# Dependencies
+node_modules/
+dist/
+
+# Environment
+.env
+.env.local
+.env.*.local
+
+# Supabase
+supabase/.temp/
+supabase/.env
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Build
+*.tgz
+*.log
+
+# GSD runtime (keep DB and docs, ignore runtime)
+.gsd/runtime/
+.gsd/worktrees/
+.gsd/activity/

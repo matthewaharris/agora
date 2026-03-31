@@ -2,7 +2,7 @@
 
 **Active Milestone:** M001: M001
 **Active Slice:** S01: Supabase Schema & Project Setup
-**Phase:** planning
+**Phase:** evaluating-gates
 **Requirements Status:** 0 active · 0 validated · 0 deferred · 0 out of scope
 
 ## Milestone Registry
@@ -17,4 +17,4 @@
 - None
 
 ## Next Action
-Slice S01 has a plan file but no tasks. Add tasks to the plan.
+Evaluate 3 quality gate(s) for S01 before execution.

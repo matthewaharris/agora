@@ -1,0 +1,22 @@
+{
+  "name": "oacp",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Open Agent Communication Protocol — Decentralized registry and communication layer for AI agent interoperability",
+  "scripts": {
+    "supabase:start": "npx supabase start",
+    "supabase:stop": "npx supabase stop",
+    "supabase:reset": "npx supabase db reset",
+    "supabase:functions": "npx supabase functions serve --no-verify-jwt",
+    "lint": "npm run lint --workspaces --if-present",
+    "build": "npm run build --workspaces --if-present",
+    "test": "npm run test --workspaces --if-present"
+  },
+  "workspaces": [
+    "packages/*",
+    "apps/*",
+    "agents/*"
+  ],
+  "keywords": ["oacp", "agent", "protocol", "ai", "interoperability"],
+  "license": "MIT"
+}
