@@ -16,7 +16,7 @@
   - Estimate: 20min
   - Files: supabase/functions/oacp/index.ts, supabase/functions/_shared/types.ts, supabase/functions/_shared/cors.ts
   - Verify: cd supabase/functions && deno check oacp/index.ts 2>&1 || echo 'Check TypeScript manually'
-- [ ] **T04: Write PROJECT.md and verify local Supabase stack** — 1. Create .gsd/PROJECT.md describing the OACP project\n2. Create top-level README.md with project overview and setup instructions\n3. Verify supabase start brings up the stack (if Docker available)\n4. Verify migration applies cleanly\n5. Test health endpoint if local stack is running\n6. Commit all work
+- [x] **T04: Created PROJECT.md and README.md, committed all S01 work** — 1. Create .gsd/PROJECT.md describing the OACP project\n2. Create top-level README.md with project overview and setup instructions\n3. Verify supabase start brings up the stack (if Docker available)\n4. Verify migration applies cleanly\n5. Test health endpoint if local stack is running\n6. Commit all work
   - Estimate: 15min
   - Files: .gsd/PROJECT.md, README.md
   - Verify: cat .gsd/PROJECT.md && cat README.md | head -20
