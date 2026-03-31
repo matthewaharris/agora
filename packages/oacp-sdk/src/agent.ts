@@ -439,12 +439,12 @@ export class OACPAgent {
    * Start Supabase Realtime subscription for incoming messages.
    * @private
    */
-  private startRealtimeSubscription(): void {
+  private async startRealtimeSubscription(): Promise<void> {
     if (!this.agentId) return;
 
     try {
-      // Lazy-import createClient to avoid requiring @supabase/supabase-js at import time
-      const { createClient } = require('@supabase/supabase-js');
+      // Dynamic import for ESM compatibility
+      const { createClient } = await import('@supabase/supabase-js');
 
       if (!this.supabaseClient) {
         this.supabaseClient = createClient(
