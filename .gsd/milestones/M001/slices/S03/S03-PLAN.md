@@ -12,7 +12,7 @@
   - Estimate: 30min
   - Files: packages/oacp-sdk/src/agent.ts, packages/oacp-sdk/src/config.ts, packages/oacp-sdk/src/index.ts
   - Verify: tsc --noEmit or structural validation of class methods
-- [ ] **T03: Build verification, example script, and documentation** — 1. Run npm install in packages/oacp-sdk to verify deps resolve\n2. Run tsc build to verify compilation\n3. Create a simple example script (examples/basic-agent.ts) showing SDK usage\n4. Update README with SDK section\n5. Commit all S03 work
+- [x] **T03: SDK builds clean with zero type errors; example script and docs ready** — 1. Run npm install in packages/oacp-sdk to verify deps resolve\n2. Run tsc build to verify compilation\n3. Create a simple example script (examples/basic-agent.ts) showing SDK usage\n4. Update README with SDK section\n5. Commit all S03 work
   - Estimate: 15min
   - Files: packages/oacp-sdk/src/index.ts, examples/basic-agent.ts, README.md
   - Verify: npm run build in packages/oacp-sdk succeeds; example script has valid syntax

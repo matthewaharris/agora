@@ -1,0 +1,6 @@
+# S03: OACP-SDK Core — Registration, Heartbeat, Discovery — UAT
+
+**Milestone:** M001
+**Written:** 2026-03-31T20:51:44.058Z
+
+## UAT: S03 — OACP-SDK Core\n\n### Test 1: Build\n- [ ] npm install resolves all dependencies (0 vulnerabilities)\n- [ ] tsc --noEmit reports 0 errors\n- [ ] tsc produces dist/ with .js, .d.ts, .d.ts.map, .js.map for all modules\n\n### Test 2: Crypto Module\n- [ ] generateKeypair() returns { secretKey, publicKey } as 64-char hex strings\n- [ ] signMessage() produces valid Ed25519 signature\n- [ ] verifySignature() returns true for valid sig, false for tampered\n- [ ] loadOrCreateKeypair() creates file on first call, loads on subsequent\n\n### Test 3: OACPAgent\n- [ ] Constructor loads/generates keypair and logs initialization\n- [ ] register() calls POST /register and stores agent_id + token\n- [ ] heartbeat() calls POST /heartbeat with Bearer token\n- [ ] startHeartbeat() begins automatic heartbeat loop\n- [ ] stopHeartbeat() clears the interval\n- [ ] discover() calls GET /discover with query params\n- [ ] sign()/verify() delegate to crypto module correctly\n- [ ] shutdown() stops heartbeat and logs\n\n### Test 4: Example\n- [ ] examples/basic-agent.ts runs without syntax errors (requires live Supabase)
