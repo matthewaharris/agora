@@ -1,0 +1,411 @@
+{
+  "version": 1,
+  "exported_at": "2026-03-31T19:28:31.107Z",
+  "milestones": [
+    {
+      "id": "M001",
+      "title": "",
+      "status": "queued",
+      "depends_on": [],
+      "created_at": "2026-03-31T19:25:42.091Z",
+      "completed_at": null,
+      "vision": "Stand up the OACP backend (Supabase schema + Edge Functions) and build the TypeScript SDK so that a single agent can register, heartbeat, and be discovered. This is the foundation everything else builds on.",
+      "success_criteria": [
+        "An agent can register via POST /oacp/register and receive a unique agent_id + registry_token",
+        "Agent Card (with Ed25519 public key) is persisted in Supabase Postgres",
+        "Heartbeat endpoint works and auto-offline detection triggers after 90s silence",
+        "Discovery endpoint returns agents filtered by capability tag and status",
+        "oacp-sdk TypeScript package exposes register(), heartbeat(), discover() methods",
+        "All endpoints validate signatures and return proper error codes",
+        "Supabase migration files are version-controlled and reproducible"
+      ],
+      "key_risks": [
+        {
+          "risk": "Supabase Edge Functions use Deno runtime — SDK must be isomorphic",
+          "whyItMatters": "If the SDK only works in Node.js, it can't be used in Edge Functions for server-side validation"
+        },
+        {
+          "risk": "Ed25519 key management in prototype — private keys stored in plaintext config files",
+          "whyItMatters": "Security is a non-goal for v0.1 but must not create patterns that are impossible to harden later"
+        },
+        {
+          "risk": "Supabase Realtime connection limits on free tier (500 concurrent)",
+          "whyItMatters": "Limits demo scale but acceptable for prototype — must document scaling path"
+        }
+      ],
+      "proof_strategy": [
+        {
+          "riskOrUnknown": "Edge Function API correctness",
+          "retireIn": "S01, S02",
+          "whatWillBeProven": "curl/httpie tests against local Supabase show registration, heartbeat, discovery working"
+        },
+        {
+          "riskOrUnknown": "SDK usability",
+          "retireIn": "S03",
+          "whatWillBeProven": "A simple agent script using oacp-sdk can register and be discovered"
+        },
+        {
+          "riskOrUnknown": "Auto-offline detection",
+          "retireIn": "S02",
+          "whatWillBeProven": "Agent status changes to offline after 90s without heartbeat"
+        }
+      ],
+      "verification_contract": "All Edge Function endpoints return correct HTTP status codes and JSON responses. SDK methods are type-safe and match the API contract.",
+      "verification_integration": "oacp-sdk can call live Supabase Edge Functions and receive valid responses. Supabase Realtime subscription receives heartbeat status changes.",
+      "verification_operational": "Supabase local dev stack (supabase start) runs migrations and serves Edge Functions without errors.",
+      "verification_uat": "A developer can run a single agent script that registers, heartbeats, and appears in discovery results.",
+      "definition_of_done": [
+        "Supabase migration files create agents table with all required columns",
+        "Edge Functions deployed and responding on /oacp/* routes",
+        "oacp-sdk package builds, passes lint, and exports typed API",
+        "README documents setup steps and environment variables",
+        "All code committed with passing CI checks"
+      ],
+      "requirement_coverage": "REQ-REG-01 through REQ-REG-04 (registration), REQ-HB-01 through REQ-HB-03 (heartbeat/presence), REQ-DISC-01 through REQ-DISC-03 (discovery), REQ-AGENT-01 partial (SDK core methods)",
+      "boundary_map_markdown": "```\nSupabase (owned)\n├── Postgres: agents table, heartbeat tracking\n├── Edge Functions: /oacp/register, /oacp/heartbeat, /oacp/discover\n└── Realtime: status change events\n\noacp-sdk (owned)\n├── OACPAgent class: register(), startHeartbeat(), discover()\n├── Ed25519 identity: keypair generation, message signing\n└── Supabase client: REST calls + Realtime subscription\n\nExternal\n├── @noble/ed25519: cryptographic primitives\n├── @supabase/supabase-js: database/realtime client\n└── Supabase CLI: local dev environment\n```"
+    },
+    {
+      "id": "M002",
+      "title": "",
+      "status": "queued",
+      "depends_on": [],
+      "created_at": "2026-03-31T19:27:07.265Z",
+      "completed_at": null,
+      "vision": "Complete the communication layer: agents can send structured, signed messages to each other through the Supabase message bus, with the SDK providing a clean event-driven API.",
+      "success_criteria": [
+        "Messages table exists with Realtime enabled on recipient_agent_id channel",
+        "POST /oacp/messages/send validates envelope schema and verifies sender signature",
+        "Messages are persisted for audit/replay (REQ-MSG-05)",
+        "SDK agent.send(recipientId, payload) composes and signs message envelope",
+        "SDK agent.on('task_request', handler) receives messages via Realtime subscription",
+        "Two agents in separate processes can exchange a complete task lifecycle"
+      ],
+      "key_risks": [
+        {
+          "risk": "Supabase Realtime message ordering is not guaranteed",
+          "whyItMatters": "Task ack/result may arrive before request in race conditions — need sequence numbers"
+        },
+        {
+          "risk": "Realtime subscription reliability on reconnect",
+          "whyItMatters": "Agent could miss messages during brief disconnects — need catch-up query from messages table"
+        },
+        {
+          "risk": "Signature verification adds latency to message flow",
+          "whyItMatters": "Must be fast enough for real-time demo feel — Ed25519 verify is ~1ms, acceptable"
+        }
+      ],
+      "proof_strategy": [
+        {
+          "riskOrUnknown": "Message persistence and routing",
+          "retireIn": "S01",
+          "whatWillBeProven": "Messages are stored in DB and delivered via Realtime to correct recipient"
+        },
+        {
+          "riskOrUnknown": "End-to-end signed message exchange",
+          "retireIn": "S02",
+          "whatWillBeProven": "Two SDK agents exchange signed messages, verify signatures, and complete a task lifecycle"
+        }
+      ],
+      "verification_contract": "Message envelope conforms to schema. Signature verification rejects tampered messages. All message types are routed correctly.",
+      "verification_integration": "SDK agent in Process A sends message to SDK agent in Process B. Both agents verify signatures and complete task lifecycle.",
+      "verification_operational": "Messages table retains all envelopes. Realtime subscription reconnects automatically after brief disconnect.",
+      "verification_uat": "Two developer terminals running separate agents can exchange a research task and see results in real-time.",
+      "definition_of_done": [
+        "Messages table created with Realtime enabled",
+        "POST /oacp/messages/send endpoint validates and routes messages",
+        "SDK agent.send() and agent.on() work end-to-end between two agents",
+        "Message signatures are verified on both send and receive",
+        "All message types (task_request, task_ack, task_result, task_error) are handled",
+        "Integration test demonstrates two-agent message exchange"
+      ],
+      "requirement_coverage": "REQ-MSG-01 through REQ-MSG-05 (messaging), REQ-AGENT-02 (SDK event API), REQ-AGENT-03 (message signing)",
+      "boundary_map_markdown": "```\nSupabase (extends M001)\n├── Postgres: messages table, Realtime enabled\n├── Edge Functions: /oacp/messages/send endpoint\n└── Realtime: message delivery channels per agent_id\n\noacp-sdk (extends M001)\n├── send() method: compose + sign + POST envelope\n├── on('task_request', handler): receive via Realtime subscription\n└── Message signing/verification with Ed25519\n\nExternal\n├── @noble/ed25519: sign/verify message envelopes\n└── Supabase Realtime: WebSocket message delivery\n```"
+    },
+    {
+      "id": "M003",
+      "title": "",
+      "status": "queued",
+      "depends_on": [],
+      "created_at": "2026-03-31T19:27:58.891Z",
+      "completed_at": null,
+      "vision": "Bring the full OACP vision to life: two agents discovering each other and collaborating on a research task, observable in real-time through a web dashboard. This is the demo that proves the protocol works.",
+      "success_criteria": [
+        "Two agents in separate processes complete the PRD Section 7 demo scenario",
+        "Web dashboard shows live agent registry with status indicators",
+        "Web dashboard shows real-time message timeline",
+        "Demo is reproducible from a fresh clone with documented setup",
+        "Full task lifecycle is observable: register → discover → task_request → task_ack → task_result"
+      ],
+      "key_risks": [
+        {
+          "risk": "LLM API dependency adds latency and cost to demo",
+          "whyItMatters": "Demo must feel real-time; LLM calls can take 5-15s. Consider mock fallback."
+        },
+        {
+          "risk": "Two-agent coordination timing",
+          "whyItMatters": "Both agents must be running and registered before discovery; need startup sequencing"
+        },
+        {
+          "risk": "Web dashboard Realtime subscription stability",
+          "whyItMatters": "Dashboard must stay connected and show updates without manual refresh"
+        }
+      ],
+      "proof_strategy": [
+        {
+          "riskOrUnknown": "Agent task processing works end-to-end",
+          "retireIn": "S01",
+          "whatWillBeProven": "Research agent receives task, processes it, returns result to requesting agent"
+        },
+        {
+          "riskOrUnknown": "Web dashboard shows live state",
+          "retireIn": "S02",
+          "whatWillBeProven": "Dashboard reflects agent registration and message exchange in real-time"
+        },
+        {
+          "riskOrUnknown": "Full demo is reproducible",
+          "retireIn": "S03",
+          "whatWillBeProven": "A fresh checkout can run the complete demo end-to-end with documented steps"
+        }
+      ],
+      "verification_contract": "Reference agents use oacp-sdk correctly. Dashboard subscribes to correct Realtime channels.",
+      "verification_integration": "Full demo scenario from PRD Section 7 runs end-to-end. Dashboard reflects all state changes.",
+      "verification_operational": "Demo can be started with a single command. Dashboard deploys to Vercel. Agents deploy to Render.",
+      "verification_uat": "A new developer can clone the repo and run the demo within 10 minutes following the README.",
+      "definition_of_done": [
+        "Research agent registers and responds to research-summarization tasks",
+        "Extraction agent discovers research agent and sends a task",
+        "Full task lifecycle (request → ack → result) completes end-to-end",
+        "Web dashboard shows live registry state and message timeline",
+        "Demo can be run with `npm run demo` from project root",
+        "README includes step-by-step demo walkthrough"
+      ],
+      "requirement_coverage": "REQ-AGENT-04 (runnable agent), REQ-IOS-01 through REQ-IOS-05 (adapted to web dashboard), Demo Use Case Section 7 (full scenario)",
+      "boundary_map_markdown": "```\nDemo Agents (new)\n├── research-agent: registers with 'research-summarization', processes tasks via LLM\n├── extraction-agent: registers with 'data-extraction', discovers research-agent, sends task\n└── Both use oacp-sdk from M001+M002\n\nWeb Dashboard (new, Vercel)\n├── Next.js/React app connecting to Supabase Realtime\n├── Registry view: agent cards with status indicators\n├── Messages view: chronological feed of message exchange\n└── Trigger demo task from UI\n\nExternal\n├── OpenAI/Anthropic API: LLM calls for research summarization\n└── Supabase Realtime: live updates to dashboard\n```"
+    }
+  ],
+  "slices": [
+    {
+      "milestone_id": "M001",
+      "id": "S01",
+      "title": "Supabase Schema & Project Setup",
+      "status": "pending",
+      "risk": "low",
+      "depends": [],
+      "demo": "supabase start runs clean; agents table exists with correct schema; Edge Function skeleton responds to health check",
+      "created_at": "2026-03-31T19:27:04.924Z",
+      "completed_at": null,
+      "full_summary_md": "",
+      "full_uat_md": "",
+      "goal": "Initialize Supabase project, create migration for agents table, deploy skeleton Edge Function with health check endpoint",
+      "success_criteria": "supabase start succeeds; psql shows agents table with all columns; curl to /oacp/health returns 200",
+      "proof_level": "automated (migration + curl)",
+      "integration_closure": "Provides database schema and Edge Function scaffold for S02",
+      "observability_impact": "Supabase dashboard shows table and function",
+      "sequence": 0,
+      "replan_triggered_at": null
+    },
+    {
+      "milestone_id": "M001",
+      "id": "S02",
+      "title": "Registration, Heartbeat & Discovery API",
+      "status": "pending",
+      "risk": "medium",
+      "depends": [
+        "S01"
+      ],
+      "demo": "curl can register an agent, send heartbeats, and discover by capability tag; auto-offline works after 90s",
+      "created_at": "2026-03-31T19:27:04.924Z",
+      "completed_at": null,
+      "full_summary_md": "",
+      "full_uat_md": "",
+      "goal": "Implement the three core Edge Function endpoints with full request validation, Ed25519 signature verification, and auto-offline scheduled function",
+      "success_criteria": "All REQ-REG, REQ-HB, REQ-DISC requirements pass via HTTP tests",
+      "proof_level": "automated (integration tests)",
+      "integration_closure": "Provides working API that S03 SDK will consume",
+      "observability_impact": "Edge Function logs show request/response details",
+      "sequence": 0,
+      "replan_triggered_at": null
+    },
+    {
+      "milestone_id": "M001",
+      "id": "S03",
+      "title": "OACP-SDK Core — Registration, Heartbeat, Discovery",
+      "status": "pending",
+      "risk": "medium",
+      "depends": [
+        "S02"
+      ],
+      "demo": "A TypeScript script using oacp-sdk registers an agent, starts auto-heartbeat, and discovers other agents",
+      "created_at": "2026-03-31T19:27:04.924Z",
+      "completed_at": null,
+      "full_summary_md": "",
+      "full_uat_md": "",
+      "goal": "Build the oacp-sdk npm package with OACPAgent class, Ed25519 identity management, and typed methods for register/heartbeat/discover",
+      "success_criteria": "SDK builds; unit tests pass; integration test against local Supabase succeeds; agent appears in discovery results",
+      "proof_level": "automated (unit + integration tests)",
+      "integration_closure": "Provides SDK that M002 messaging will extend",
+      "observability_impact": "SDK logs connection state and heartbeat status",
+      "sequence": 0,
+      "replan_triggered_at": null
+    },
+    {
+      "milestone_id": "M002",
+      "id": "S01",
+      "title": "Messages Table & Send Endpoint",
+      "status": "pending",
+      "risk": "medium",
+      "depends": [],
+      "demo": "curl POST to /oacp/messages/send stores message and triggers Realtime event visible in Supabase dashboard",
+      "created_at": "2026-03-31T19:27:56.473Z",
+      "completed_at": null,
+      "full_summary_md": "",
+      "full_uat_md": "",
+      "goal": "Create messages table, implement send endpoint with signature verification and Realtime routing",
+      "success_criteria": "Message sent via API appears in messages table; Realtime event fires on recipient channel; signature is verified",
+      "proof_level": "automated (curl + DB query)",
+      "integration_closure": "Provides message API that S02 SDK will wrap",
+      "observability_impact": "Messages visible in Supabase table and Realtime inspector",
+      "sequence": 0,
+      "replan_triggered_at": null
+    },
+    {
+      "milestone_id": "M002",
+      "id": "S02",
+      "title": "SDK Messaging — send(), on(), Signature Verification",
+      "status": "pending",
+      "risk": "medium",
+      "depends": [
+        "S01"
+      ],
+      "demo": "Two agent scripts exchange a task_request/task_result cycle using agent.send() and agent.on()",
+      "created_at": "2026-03-31T19:27:56.473Z",
+      "completed_at": null,
+      "full_summary_md": "",
+      "full_uat_md": "",
+      "goal": "Extend oacp-sdk with send(), on() event handlers, Realtime subscription for incoming messages, and signature sign/verify",
+      "success_criteria": "agent.send() delivers signed message; agent.on('task_request') fires on recipient; task_result round-trip completes; signatures verified",
+      "proof_level": "automated (integration test with two agents)",
+      "integration_closure": "Completes the SDK messaging contract; M003 demo can use this",
+      "observability_impact": "SDK logs message send/receive with timing",
+      "sequence": 0,
+      "replan_triggered_at": null
+    },
+    {
+      "milestone_id": "M003",
+      "id": "S01",
+      "title": "Reference Agents — Research & Extraction Demo",
+      "status": "pending",
+      "risk": "medium",
+      "depends": [],
+      "demo": "Run research-agent and extraction-agent in two terminals; extraction-agent discovers and sends task; research-agent returns summarized result",
+      "created_at": "2026-03-31T19:28:31.092Z",
+      "completed_at": null,
+      "full_summary_md": "",
+      "full_uat_md": "",
+      "goal": "Build two reference agent scripts using oacp-sdk that execute the PRD Section 7 demo scenario",
+      "success_criteria": "Both agents register; discovery finds research agent; task request/ack/result cycle completes; console shows full timeline",
+      "proof_level": "automated (demo script with assertions)",
+      "integration_closure": "Proves the full OACP protocol stack works end-to-end",
+      "observability_impact": "Agent console logs show full lifecycle with timing",
+      "sequence": 0,
+      "replan_triggered_at": null
+    },
+    {
+      "milestone_id": "M003",
+      "id": "S02",
+      "title": "Web Observer Dashboard",
+      "status": "pending",
+      "risk": "low",
+      "depends": [
+        "S01"
+      ],
+      "demo": "Open dashboard in browser; see agents appear live; watch messages flow in real-time timeline",
+      "created_at": "2026-03-31T19:28:31.092Z",
+      "completed_at": null,
+      "full_summary_md": "",
+      "full_uat_md": "",
+      "goal": "Build a web dashboard (React/Next.js) that connects to Supabase Realtime and shows registry state + message timeline",
+      "success_criteria": "Dashboard shows agent cards with live status; message feed updates in real-time; agent detail view works",
+      "proof_level": "manual (visual verification)",
+      "integration_closure": "Provides visual observer for demos and presentations",
+      "observability_impact": "Visual real-time monitoring of the entire OACP system",
+      "sequence": 0,
+      "replan_triggered_at": null
+    },
+    {
+      "milestone_id": "M003",
+      "id": "S03",
+      "title": "Demo Orchestration & Documentation",
+      "status": "pending",
+      "risk": "low",
+      "depends": [
+        "S01",
+        "S02"
+      ],
+      "demo": "git clone, npm install, add env vars, npm run demo — full system running",
+      "created_at": "2026-03-31T19:28:31.092Z",
+      "completed_at": null,
+      "full_summary_md": "",
+      "full_uat_md": "",
+      "goal": "Create demo orchestration script, comprehensive README, and ensure reproducible setup from a fresh clone",
+      "success_criteria": "Fresh clone with documented steps produces working demo within 10 minutes",
+      "proof_level": "manual (fresh clone test)",
+      "integration_closure": "Complete deliverable ready for sharing/presentation",
+      "observability_impact": "README serves as primary documentation",
+      "sequence": 0,
+      "replan_triggered_at": null
+    }
+  ],
+  "tasks": [],
+  "decisions": [
+    {
+      "seq": 1,
+      "id": "D001",
+      "when_context": "",
+      "scope": "architecture",
+      "decision": "Deployment platform for OACP backend API",
+      "choice": "Supabase Edge Functions (Deno) for API + Postgres + Realtime; Vercel for web dashboard only; Render for reference agent runtime",
+      "rationale": "Supabase provides the full stack needed: Edge Functions for REST API, Postgres for persistence, Realtime for WebSocket pub-sub message bus. Vercel is serverless-only (not suited for persistent agent processes). Render provides persistent Node.js for always-on agent heartbeating. This maps to user's stated deployment preferences.",
+      "revisable": "Yes",
+      "made_by": "collaborative",
+      "superseded_by": null
+    },
+    {
+      "seq": 2,
+      "id": "D002",
+      "when_context": "",
+      "scope": "architecture",
+      "decision": "iOS app vs web dashboard for demo observer UI",
+      "choice": "Build web-based observer dashboard first; defer iOS SwiftUI app to a later milestone",
+      "rationale": "iOS app is a significant scope addition (SwiftUI, Supabase Swift SDK, separate build toolchain). A web dashboard achieves the same observer/controller goal with same TypeScript stack, 1/5th the effort. iOS can follow as a separate milestone once the protocol is proven.",
+      "revisable": "Yes — can add iOS milestone later",
+      "made_by": "agent",
+      "superseded_by": null
+    },
+    {
+      "seq": 3,
+      "id": "D003",
+      "when_context": "",
+      "scope": "library",
+      "decision": "Cryptographic library for agent identity",
+      "choice": "@noble/ed25519 v3.x for Ed25519 keypair generation, message signing, and verification",
+      "rationale": "5KB, zero dependencies, RFC8032/FIPS-186-5 compliant, SUF-CMA secure, works in Node.js/Deno/browsers. Most widely-used pure-JS Ed25519 implementation (788 dependents). Async and sync APIs available.",
+      "revisable": "Yes",
+      "made_by": "agent",
+      "superseded_by": null
+    },
+    {
+      "seq": 4,
+      "id": "D004",
+      "when_context": "",
+      "scope": "architecture",
+      "decision": "Agent Card schema design strategy",
+      "choice": "Align OACP Agent Card with A2A Agent Card structure where possible; add protocols_supported field for future A2A bridging",
+      "rationale": "A2A is now the dominant agent-to-agent standard (150+ orgs, Linux Foundation governance). Aligning schema structure makes future interop easier. OACP adds registry/relay primitives that A2A lacks, so compatibility is complementary not redundant.",
+      "revisable": "Yes",
+      "made_by": "agent",
+      "superseded_by": null
+    }
+  ],
+  "verification_evidence": []
+}

@@ -1,0 +1,12 @@
+# Decisions Register
+
+<!-- Append-only. Never edit or remove existing rows.
+     To reverse a decision, add a new row that supersedes it.
+     Read this file at the start of any planning or research phase. -->
+
+| # | When | Scope | Decision | Choice | Rationale | Revisable? | Made By |
+|---|------|-------|----------|--------|-----------|------------|---------|
+| D001 |  | architecture | Deployment platform for OACP backend API | Supabase Edge Functions (Deno) for API + Postgres + Realtime; Vercel for web dashboard only; Render for reference agent runtime | Supabase provides the full stack needed: Edge Functions for REST API, Postgres for persistence, Realtime for WebSocket pub-sub message bus. Vercel is serverless-only (not suited for persistent agent processes). Render provides persistent Node.js for always-on agent heartbeating. This maps to user's stated deployment preferences. | Yes | collaborative |
+| D002 |  | architecture | iOS app vs web dashboard for demo observer UI | Build web-based observer dashboard first; defer iOS SwiftUI app to a later milestone | iOS app is a significant scope addition (SwiftUI, Supabase Swift SDK, separate build toolchain). A web dashboard achieves the same observer/controller goal with same TypeScript stack, 1/5th the effort. iOS can follow as a separate milestone once the protocol is proven. | Yes — can add iOS milestone later | agent |
+| D003 |  | library | Cryptographic library for agent identity | @noble/ed25519 v3.x for Ed25519 keypair generation, message signing, and verification | 5KB, zero dependencies, RFC8032/FIPS-186-5 compliant, SUF-CMA secure, works in Node.js/Deno/browsers. Most widely-used pure-JS Ed25519 implementation (788 dependents). Async and sync APIs available. | Yes | agent |
+| D004 |  | architecture | Agent Card schema design strategy | Align OACP Agent Card with A2A Agent Card structure where possible; add protocols_supported field for future A2A bridging | A2A is now the dominant agent-to-agent standard (150+ orgs, Linux Foundation governance). Aligning schema structure makes future interop easier. OACP adds registry/relay primitives that A2A lacks, so compatibility is complementary not redundant. | Yes | agent |
