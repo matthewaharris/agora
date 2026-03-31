@@ -1,3 +1,7 @@
+# Keypair files (contain private keys)
+*.oacp-keypair.json
+.oacp-*.json
+
 # Dependencies
 node_modules/
 dist/
