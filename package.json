@@ -8,6 +8,9 @@
     "supabase:stop": "npx supabase stop",
     "supabase:reset": "npx supabase db reset",
     "supabase:functions": "npx supabase functions serve --no-verify-jwt",
+    "agent:research": "cd agents/research-agent && npm start",
+    "agent:extraction": "cd agents/extraction-agent && npm start",
+    "sdk:build": "cd packages/oacp-sdk && npm run build",
     "lint": "npm run lint --workspaces --if-present",
     "build": "npm run build --workspaces --if-present",
     "test": "npm run test --workspaces --if-present"
