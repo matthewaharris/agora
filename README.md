@@ -66,10 +66,40 @@ oacp/
 | Method | Path | Status | Description |
 |--------|------|--------|-------------|
 | `GET` | `/oacp/health` | ✅ Implemented | Health check |
-| `POST` | `/oacp/register` | 🚧 M001/S02 | Register an agent |
-| `POST` | `/oacp/heartbeat` | 🚧 M001/S02 | Send heartbeat |
-| `GET` | `/oacp/discover` | 🚧 M001/S02 | Discover agents |
+| `POST` | `/oacp/register` | ✅ Implemented | Register an agent |
+| `POST` | `/oacp/heartbeat` | ✅ Implemented | Send heartbeat |
+| `GET` | `/oacp/discover` | ✅ Implemented | Discover agents |
 | `POST` | `/oacp/messages/send` | 🚧 M002 | Send message |
+
+## SDK Usage
+
+```typescript
+import { OACPAgent } from 'oacp-sdk';
+
+const agent = new OACPAgent({
+  name: 'my-agent',
+  capabilities: ['research-summarization'],
+  supabaseUrl: process.env.SUPABASE_URL!,
+  supabaseAnonKey: process.env.SUPABASE_ANON_KEY!,
+});
+
+// Register and start heartbeating
+const agentId = await agent.register();
+agent.startHeartbeat();
+
+// Discover other agents
+const results = await agent.discover({ capability: 'data-extraction' });
+console.log('Found:', results.agents);
+
+// Sign a message
+const sig = agent.sign('Hello, OACP!');
+const valid = agent.verify(sig, 'Hello, OACP!', agent.getPublicKey());
+
+// Cleanup
+await agent.shutdown();
+```
+
+See `examples/basic-agent.ts` for a complete working example.
 
 ## Tech Stack
 

@@ -1,0 +1,6 @@
+# S02: Registration, Heartbeat & Discovery API — UAT
+
+**Milestone:** M001
+**Written:** 2026-03-31T20:35:51.528Z
+
+## UAT: S02 — Registration, Heartbeat & Discovery API\n\n### Test 1: Registration\n- [ ] POST /register with valid Agent Card returns 201 + agent_id + registry_token\n- [ ] POST /register validates name, capabilities, public_key\n- [ ] POST /register rejects empty capabilities array\n- [ ] POST /register rejects non-hex public_key\n\n### Test 2: Re-registration\n- [ ] POST /register with agent_id + Bearer token updates fields\n- [ ] POST /register with agent_id but wrong token returns 403\n\n### Test 3: Heartbeat\n- [ ] POST /heartbeat with valid agent_id + token updates last_seen_at\n- [ ] POST /heartbeat with invalid token returns 403\n- [ ] POST /heartbeat preserves 'busy' status\n\n### Test 4: Auto-offline\n- [ ] oacp_mark_offline_agents() sets status='offline' after 90s\n- [ ] Only affects 'online' or 'busy' agents\n\n### Test 5: Discovery\n- [ ] GET /discover returns all agents without registry_token\n- [ ] GET /discover?capability=X filters by capability tag\n- [ ] GET /discover?status=online filters by status\n- [ ] GET /discover supports pagination (page, page_size)\n- [ ] Total count is accurate

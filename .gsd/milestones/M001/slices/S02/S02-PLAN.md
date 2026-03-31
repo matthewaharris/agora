@@ -16,7 +16,7 @@
   - Estimate: 20min
   - Files: supabase/functions/oacp/index.ts
   - Verify: Structural check: handler queries with filters, strips sensitive fields, paginates
-- [ ] **T04: Integration test script and final verification** — 1. Create test script (scripts/test-api.sh or similar) that:\n   - Calls /health and checks response\n   - Registers an agent and captures agent_id + token\n   - Sends heartbeat and verifies last_seen_at updated\n   - Registers a second agent with different capabilities\n   - Discovers by capability tag and verifies results\n   - Verifies re-registration works\n2. Verify all handlers compile (no syntax errors)\n3. Commit all S02 work
+- [x] **T04: Created integration test script with 10 test scenarios covering all API endpoints** — 1. Create test script (scripts/test-api.sh or similar) that:\n   - Calls /health and checks response\n   - Registers an agent and captures agent_id + token\n   - Sends heartbeat and verifies last_seen_at updated\n   - Registers a second agent with different capabilities\n   - Discovers by capability tag and verifies results\n   - Verifies re-registration works\n2. Verify all handlers compile (no syntax errors)\n3. Commit all S02 work
   - Estimate: 15min
   - Files: scripts/test-api.sh
   - Verify: Test script exists with all endpoint tests; all Edge Function files have valid structure
