@@ -1,15 +1,11 @@
 /**
  * OACP Research Agent — LLM Integration
  *
- * Calls OpenAI's chat completion API for real research summarization.
+ * Supports OpenAI and Anthropic APIs for real research summarization.
  * Sandboxed with a hardened system prompt that prevents prompt injection.
  *
- * Falls back gracefully if OPENAI_API_KEY is not set.
+ * Priority: ANTHROPIC_API_KEY → OPENAI_API_KEY → built-in fallback
  */
-
-// ============================================================
-// System Prompt — The Security Boundary
-// ============================================================
 
 const SYSTEM_PROMPT = `You are a factual research summarizer. Your ONLY job is to provide a concise, accurate summary of the given topic.
 
@@ -24,10 +20,6 @@ STRICT RULES:
 - Cite specific facts, dates, numbers, and organizations when available
 - If you don't know enough about a topic, say so honestly`;
 
-// ============================================================
-// Types
-// ============================================================
-
 interface LLMResult {
   summary: string;
   word_count: number;
@@ -35,48 +27,79 @@ interface LLMResult {
   tokens_used: number;
   duration_ms: number;
   source: 'llm';
+  provider: string;
 }
 
-interface OpenAIChatResponse {
-  choices: Array<{
-    message: { content: string };
-  }>;
-  usage: {
-    total_tokens: number;
+// ============================================================
+// Anthropic Claude
+// ============================================================
+
+interface AnthropicResponse {
+  content: Array<{ type: string; text: string }>;
+  model: string;
+  usage: { input_tokens: number; output_tokens: number };
+}
+
+async function summarizeWithAnthropic(task: string, maxWords: number): Promise<LLMResult> {
+  const apiKey = process.env.ANTHROPIC_API_KEY!;
+  const model = process.env.ANTHROPIC_MODEL || 'claude-sonnet-4-20250514';
+  const startTime = Date.now();
+  const maxTokens = Math.min(Math.ceil(maxWords * 1.5), 2000);
+
+  const response = await fetch('https://api.anthropic.com/v1/messages', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'x-api-key': apiKey,
+      'anthropic-version': '2023-06-01',
+    },
+    body: JSON.stringify({
+      model,
+      max_tokens: maxTokens,
+      system: SYSTEM_PROMPT,
+      messages: [
+        { role: 'user', content: `Summarize the following topic in under ${maxWords} words:\n\n${task}` },
+      ],
+    }),
+  });
+
+  if (!response.ok) {
+    const error = await response.text();
+    throw new Error(`Anthropic API error (${response.status}): ${error}`);
+  }
+
+  const data = (await response.json()) as AnthropicResponse;
+  const summary = data.content[0]?.text?.trim() || '';
+  const durationMs = Date.now() - startTime;
+  const totalTokens = data.usage.input_tokens + data.usage.output_tokens;
+
+  console.log(`[LLM] ${model} responded in ${durationMs}ms (${totalTokens} tokens)`);
+
+  return {
+    summary,
+    word_count: summary.split(/\s+/).length,
+    model: data.model,
+    tokens_used: totalTokens,
+    duration_ms: durationMs,
+    source: 'llm',
+    provider: 'anthropic',
   };
+}
+
+// ============================================================
+// OpenAI
+// ============================================================
+
+interface OpenAIResponse {
+  choices: Array<{ message: { content: string } }>;
+  usage: { total_tokens: number };
   model: string;
 }
 
-// ============================================================
-// LLM Summarization
-// ============================================================
-
-/**
- * Summarize a topic using OpenAI's chat completion API.
- *
- * The system prompt is hardened against prompt injection:
- * - The LLM is instructed to ONLY summarize
- * - Instructions in the user text are treated as content to summarize, not commands
- * - No tools, function calling, or code execution
- *
- * @param task - The topic or text to summarize
- * @param maxWords - Maximum words in the summary (default: 300)
- * @returns LLM result with summary and metadata
- */
-export async function summarizeWithLLM(
-  task: string,
-  maxWords: number = 300,
-): Promise<LLMResult> {
-  const apiKey = process.env.OPENAI_API_KEY;
-
-  if (!apiKey) {
-    throw new Error('OPENAI_API_KEY not set');
-  }
-
+async function summarizeWithOpenAI(task: string, maxWords: number): Promise<LLMResult> {
+  const apiKey = process.env.OPENAI_API_KEY!;
   const model = process.env.OPENAI_MODEL || 'gpt-4o-mini';
   const startTime = Date.now();
-
-  // Estimate max tokens from word limit (rough: 1.3 tokens per word)
   const maxTokens = Math.min(Math.ceil(maxWords * 1.5), 2000);
 
   const response = await fetch('https://api.openai.com/v1/chat/completions', {
@@ -89,14 +112,10 @@ export async function summarizeWithLLM(
       model,
       messages: [
         { role: 'system', content: SYSTEM_PROMPT },
-        {
-          role: 'user',
-          content: `Summarize the following topic in under ${maxWords} words:\n\n${task}`,
-        },
+        { role: 'user', content: `Summarize the following topic in under ${maxWords} words:\n\n${task}` },
       ],
       temperature: 0.3,
       max_tokens: maxTokens,
-      // No tools, no function calling — pure text completion
     }),
   });
 
@@ -105,13 +124,11 @@ export async function summarizeWithLLM(
     throw new Error(`OpenAI API error (${response.status}): ${error}`);
   }
 
-  const data = (await response.json()) as OpenAIChatResponse;
+  const data = (await response.json()) as OpenAIResponse;
   const summary = data.choices[0]?.message?.content?.trim() || '';
   const durationMs = Date.now() - startTime;
 
-  console.log(
-    `[LLM] ${model} responded in ${durationMs}ms (${data.usage.total_tokens} tokens)`,
-  );
+  console.log(`[LLM] ${model} responded in ${durationMs}ms (${data.usage.total_tokens} tokens)`);
 
   return {
     summary,
@@ -120,12 +137,34 @@ export async function summarizeWithLLM(
     tokens_used: data.usage.total_tokens,
     duration_ms: durationMs,
     source: 'llm',
+    provider: 'openai',
   };
 }
 
-/**
- * Check if LLM is available (API key set).
- */
+// ============================================================
+// Public API
+// ============================================================
+
+export function getLLMProvider(): { provider: string; model: string } | null {
+  if (process.env.ANTHROPIC_API_KEY) {
+    return { provider: 'anthropic', model: process.env.ANTHROPIC_MODEL || 'claude-sonnet-4-20250514' };
+  }
+  if (process.env.OPENAI_API_KEY) {
+    return { provider: 'openai', model: process.env.OPENAI_MODEL || 'gpt-4o-mini' };
+  }
+  return null;
+}
+
 export function isLLMAvailable(): boolean {
-  return !!process.env.OPENAI_API_KEY;
+  return getLLMProvider() !== null;
+}
+
+export async function summarizeWithLLM(task: string, maxWords: number = 300): Promise<LLMResult> {
+  if (process.env.ANTHROPIC_API_KEY) {
+    return summarizeWithAnthropic(task, maxWords);
+  }
+  if (process.env.OPENAI_API_KEY) {
+    return summarizeWithOpenAI(task, maxWords);
+  }
+  throw new Error('No LLM API key set (ANTHROPIC_API_KEY or OPENAI_API_KEY)');
 }

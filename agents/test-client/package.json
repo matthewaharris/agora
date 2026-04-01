@@ -1,0 +1,16 @@
+{
+  "name": "oacp-test-client",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "start": "tsx index.ts"
+  },
+  "dependencies": {
+    "oacp-sdk": "file:../../packages/oacp-sdk",
+    "dotenv": "^16.4.0"
+  },
+  "devDependencies": {
+    "tsx": "^4.19.0"
+  }
+}

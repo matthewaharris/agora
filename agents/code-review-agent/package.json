@@ -1,0 +1,19 @@
+{
+  "name": "oacp-code-review-agent",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "OACP agent — code review powered by Claude",
+  "scripts": {
+    "start": "tsx index.ts",
+    "dev": "tsx watch index.ts"
+  },
+  "dependencies": {
+    "oacp-sdk": "file:../../packages/oacp-sdk",
+    "dotenv": "^16.4.0"
+  },
+  "devDependencies": {
+    "tsx": "^4.19.0",
+    "typescript": "^5.7.0"
+  }
+}

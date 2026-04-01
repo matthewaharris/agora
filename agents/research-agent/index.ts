@@ -19,7 +19,7 @@
 import 'dotenv/config';
 import { OACPAgent } from 'oacp-sdk';
 import type { ActionSpec, MessageEnvelope } from 'oacp-sdk';
-import { summarizeWithLLM, isLLMAvailable } from './llm.js';
+import { summarizeWithLLM, isLLMAvailable, getLLMProvider } from './llm.js';
 
 // ============================================================
 // Configuration
@@ -127,8 +127,8 @@ const agent = new OACPAgent({
     allowedSenders: 'open',
     requireSignature: true,
   },
-  model: isLLMAvailable()
-    ? { provider: 'openai', name: process.env.OPENAI_MODEL || 'gpt-4o-mini', modalities: ['text'] }
+  model: getLLMProvider()
+    ? { provider: getLLMProvider()!.provider, name: getLLMProvider()!.model, modalities: ['text'] }
     : { provider: 'local', name: 'built-in', modalities: ['text'] },
   languages: ['en'],
 });
