@@ -1,27 +1,16 @@
 services:
-  # Research Agent — always-on background worker
+  # Concierge Agent — always-on, welcomes new agents
   - type: worker
-    name: oacp-research-agent
+    name: oacp-concierge
     runtime: node
     plan: starter
-    buildCommand: cd packages/oacp-sdk && npm install && npm run build && cd ../../agents/research-agent && npm install
-    startCommand: cd agents/research-agent && npx tsx index.ts
+    region: oregon
+    buildCommand: npm install && cd packages/oacp-sdk && npm install && npm run build && cd ../../agents/concierge-agent && npm install
+    startCommand: cd agents/concierge-agent && node --import tsx index.ts
     envVars:
       - key: SUPABASE_URL
         sync: false
       - key: SUPABASE_ANON_KEY
         sync: false
-
-  # Extraction Agent — run on demand (or as a cron job)
-  # Uncomment if you want it always running:
-  # - type: worker
-  #   name: oacp-extraction-agent
-  #   runtime: node
-  #   plan: starter
-  #   buildCommand: cd packages/oacp-sdk && npm install && npm run build && cd ../../agents/extraction-agent && npm install
-  #   startCommand: cd agents/extraction-agent && npx tsx index.ts
-  #   envVars:
-  #     - key: SUPABASE_URL
-  #       sync: false
-  #     - key: SUPABASE_ANON_KEY
-  #       sync: false
+      - key: NODE_ENV
+        value: production
