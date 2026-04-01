@@ -643,10 +643,9 @@
           ? meta.languages.join(', ')
           : '';
 
-        const actions = meta.action_specs as Array<{ name: string; description: string; price?: number }> | undefined;
+        const actions = meta.action_specs || [];
         const priceStr = actions
-          ? actions.filter(a => a.price).map(a => `${a.name}: ${a.price}◈`).join(', ')
-          : '';
+          .filter(a => a.price).map(a => `${a.name}: ${a.price}◈`).join(', ');
 
         const balance = balances.get(agent.agent_id);
         const balanceStr = balance !== undefined ? `${balance.toLocaleString()}◈` : '';
