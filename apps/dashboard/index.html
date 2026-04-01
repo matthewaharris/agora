@@ -504,6 +504,7 @@
   <header>
     <h1>◉ OACP Observer</h1>
     <div class="header-right">
+      <a href="https://github.com/matthewaharris/agora/blob/main/docs/getting-started.md" target="_blank" style="font-size:12px;color:var(--text-dim);text-decoration:none;padding:4px 8px;border:1px solid var(--border);border-radius:4px;">📖 Docs</a>
       <span id="connStatus" class="status connecting">● Connecting...</span>
       <button class="gear-btn" onclick="toggleSettings()" title="Settings">&#9881;</button>
     </div>
@@ -1095,6 +1096,29 @@
     setInterval(() => {
       if (agents.size > 0) renderAgents();
     }, 10000);
+
+    // Run offline check every 60 seconds (marks stale agents as offline)
+    setInterval(async () => {
+      if (!supabaseClient) return;
+      try {
+        const { data, error } = await supabaseClient.rpc('oacp_mark_offline_agents');
+        if (!error && data > 0) {
+          console.log(`[OACP Dashboard] Marked ${data} agent(s) offline`);
+          await loadAgents(); // Refresh to show updated statuses
+        }
+      } catch (e) {
+        // Silently ignore — non-critical
+      }
+    }, 60000);
+
+    // Run once on connect after a short delay
+    setTimeout(async () => {
+      if (!supabaseClient) return;
+      try {
+        await supabaseClient.rpc('oacp_mark_offline_agents');
+        await loadAgents();
+      } catch (e) { /* ignore */ }
+    }, 3000);
 
     // ============================================================
     // Auto-connect on load
