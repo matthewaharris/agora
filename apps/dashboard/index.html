@@ -312,10 +312,181 @@
       padding: 6px 10px;
       border-radius: 4px;
       margin-top: 6px;
-      max-height: 80px;
+      max-height: 60px;
       overflow: hidden;
       white-space: pre-wrap;
       word-break: break-all;
+      cursor: pointer;
+    }
+
+    .msg-payload:hover { opacity: 0.8; }
+    .msg-payload::after {
+      content: '  ⤢ click to expand';
+      font-size: 10px;
+      color: var(--accent);
+      opacity: 0;
+      transition: opacity 0.15s;
+    }
+    .msg-payload:hover::after { opacity: 1; }
+
+    /* Conversation threading */
+    .msg-thread-id {
+      font-size: 10px;
+      color: var(--text-dim);
+      cursor: pointer;
+      opacity: 0.6;
+    }
+    .msg-thread-id:hover { opacity: 1; color: var(--accent); }
+
+    .message-item.thread-highlight {
+      border-left: 3px solid var(--accent);
+      background: rgba(99, 102, 241, 0.05);
+    }
+
+    .thread-connector {
+      font-size: 10px;
+      color: var(--accent);
+      padding: 2px 16px;
+      background: rgba(99, 102, 241, 0.03);
+      border-bottom: 1px solid var(--border);
+    }
+
+    /* Search / filter bar */
+    .filter-bar {
+      padding: 8px 16px;
+      border-bottom: 1px solid var(--border);
+      display: flex;
+      gap: 8px;
+      align-items: center;
+      position: sticky;
+      top: 32px;
+      background: var(--bg);
+      z-index: 1;
+    }
+
+    .filter-bar input {
+      flex: 1;
+      background: var(--surface);
+      border: 1px solid var(--border);
+      color: var(--text);
+      padding: 5px 10px;
+      border-radius: 4px;
+      font-family: inherit;
+      font-size: 12px;
+    }
+
+    .filter-bar select {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      color: var(--text);
+      padding: 5px 8px;
+      border-radius: 4px;
+      font-family: inherit;
+      font-size: 12px;
+    }
+
+    .filter-bar .clear-btn {
+      background: none;
+      border: 1px solid var(--border);
+      color: var(--text-dim);
+      padding: 4px 8px;
+      border-radius: 4px;
+      cursor: pointer;
+      font-size: 11px;
+    }
+    .filter-bar .clear-btn:hover { color: var(--text); border-color: var(--text-dim); }
+
+    /* Message detail modal */
+    .modal-overlay {
+      display: none;
+      position: fixed;
+      top: 0; left: 0; right: 0; bottom: 0;
+      background: rgba(0, 0, 0, 0.7);
+      z-index: 100;
+      justify-content: center;
+      align-items: center;
+    }
+    .modal-overlay.open { display: flex; }
+
+    .modal {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      width: 90%;
+      max-width: 700px;
+      max-height: 80vh;
+      overflow-y: auto;
+      padding: 20px;
+    }
+
+    .modal-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 16px;
+      padding-bottom: 12px;
+      border-bottom: 1px solid var(--border);
+    }
+
+    .modal-header h2 { font-size: 16px; font-weight: 600; }
+
+    .modal-close {
+      background: none;
+      border: 1px solid var(--border);
+      color: var(--text-dim);
+      width: 28px;
+      height: 28px;
+      border-radius: 4px;
+      cursor: pointer;
+      font-size: 14px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+    .modal-close:hover { color: var(--text); border-color: var(--text-dim); }
+
+    .modal-field {
+      margin-bottom: 12px;
+    }
+
+    .modal-field label {
+      display: block;
+      font-size: 11px;
+      color: var(--text-dim);
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+      margin-bottom: 4px;
+    }
+
+    .modal-field .value {
+      font-size: 13px;
+      color: var(--text);
+    }
+
+    .modal-field pre {
+      background: var(--bg);
+      border: 1px solid var(--border);
+      border-radius: 4px;
+      padding: 10px;
+      font-size: 12px;
+      color: var(--text);
+      overflow-x: auto;
+      white-space: pre-wrap;
+      word-break: break-all;
+      max-height: 300px;
+      overflow-y: auto;
+    }
+
+    .modal-thread {
+      margin-top: 16px;
+      padding-top: 12px;
+      border-top: 1px solid var(--border);
+    }
+
+    .modal-thread h3 {
+      font-size: 13px;
+      color: var(--text-dim);
+      margin-bottom: 8px;
     }
 
     /* Empty states */
@@ -363,6 +534,15 @@
         <span>Agent Registry</span>
         <span class="count" id="agentCount">0 agents</span>
       </div>
+      <div class="filter-bar">
+        <input id="agentSearch" type="text" placeholder="Search agents..." oninput="renderAgents()">
+        <select id="agentStatusFilter" onchange="renderAgents()">
+          <option value="">All statuses</option>
+          <option value="online">Online</option>
+          <option value="offline">Offline</option>
+          <option value="busy">Busy</option>
+        </select>
+      </div>
       <div id="agentList">
         <div class="empty">
           <div class="icon">🤖</div>
@@ -377,12 +557,34 @@
         <span>Message Timeline</span>
         <span class="count" id="msgCount">0 messages</span>
       </div>
+      <div class="filter-bar">
+        <input id="msgSearch" type="text" placeholder="Search messages..." oninput="renderMessages()">
+        <select id="msgTypeFilter" onchange="renderMessages()">
+          <option value="">All types</option>
+          <option value="task_request">task_request</option>
+          <option value="task_result">task_result</option>
+          <option value="task_error">task_error</option>
+          <option value="task_ack">task_ack</option>
+        </select>
+        <button class="clear-btn" onclick="clearFilters()">Clear</button>
+      </div>
       <div id="messageList">
         <div class="empty">
           <div class="icon">💬</div>
           Messages will appear here in real-time
         </div>
       </div>
+    </div>
+  </div>
+
+  <!-- Message Detail Modal -->
+  <div id="modalOverlay" class="modal-overlay" onclick="if(event.target===this)closeModal()">
+    <div class="modal">
+      <div class="modal-header">
+        <h2 id="modalTitle">Message Detail</h2>
+        <button class="modal-close" onclick="closeModal()">✕</button>
+      </div>
+      <div id="modalBody"></div>
     </div>
   </div>
 
@@ -608,7 +810,23 @@
     function renderAgents() {
       const container = document.getElementById('agentList');
       const countEl = document.getElementById('agentCount');
-      const agentArray = Array.from(agents.values());
+      const searchInput = document.getElementById('agentSearch');
+      const statusFilter = document.getElementById('agentStatusFilter');
+      let agentArray = Array.from(agents.values());
+
+      const searchText = (searchInput ? searchInput.value : '').toLowerCase();
+      const statusValue = statusFilter ? statusFilter.value : '';
+
+      if (statusValue) {
+        agentArray = agentArray.filter(a => a.status === statusValue);
+      }
+
+      if (searchText) {
+        agentArray = agentArray.filter(a => {
+          const str = [a.name, a.owner_handle, ...(a.capabilities || [])].join(' ').toLowerCase();
+          return str.includes(searchText);
+        });
+      }
 
       countEl.textContent = `${agentArray.length} agent${agentArray.length !== 1 ? 's' : ''}`;
 
@@ -673,28 +891,74 @@
       }).join('');
     }
 
+    let activeThreadFilter = null; // correlation_id to highlight
+
     function renderMessages() {
       const container = document.getElementById('messageList');
       const countEl = document.getElementById('msgCount');
+      const searchInput = document.getElementById('msgSearch');
+      const typeFilter = document.getElementById('msgTypeFilter');
 
-      countEl.textContent = `${messages.length} message${messages.length !== 1 ? 's' : ''}`;
+      const searchText = (searchInput ? searchInput.value : '').toLowerCase();
+      const typeValue = typeFilter ? typeFilter.value : '';
 
-      if (messages.length === 0) {
-        container.innerHTML = `<div class="empty"><div class="icon">💬</div>No messages yet.<br>Run the demo to see messages flow.</div>`;
+      // Filter messages
+      let filtered = messages;
+
+      if (typeValue) {
+        filtered = filtered.filter(m => m.message_type === typeValue);
+      }
+
+      if (searchText) {
+        filtered = filtered.filter(m => {
+          const str = JSON.stringify(m).toLowerCase();
+          return str.includes(searchText);
+        });
+      }
+
+      if (activeThreadFilter) {
+        filtered = filtered.filter(m => m.correlation_id === activeThreadFilter);
+      }
+
+      countEl.textContent = activeThreadFilter
+        ? `thread (${filtered.length})`
+        : `${filtered.length}${filtered.length !== messages.length ? '/' + messages.length : ''} message${filtered.length !== 1 ? 's' : ''}`;
+
+      if (filtered.length === 0) {
+        container.innerHTML = `<div class="empty"><div class="icon">💬</div>${messages.length > 0 ? 'No messages match your filter' : 'No messages yet.<br>Run the demo to see messages flow.'}</div>`;
         return;
       }
 
-      container.innerHTML = messages.map(msg => {
+      // Group by correlation_id for threading
+      const threadMap = new Map();
+      for (const m of messages) {
+        if (m.correlation_id) {
+          if (!threadMap.has(m.correlation_id)) threadMap.set(m.correlation_id, []);
+          threadMap.get(m.correlation_id).push(m);
+        }
+      }
+
+      container.innerHTML = filtered.map((msg, idx) => {
         const senderName = getAgentName(msg.sender_agent_id);
         const recipientName = getAgentName(msg.recipient_agent_id);
         const time = new Date(msg.created_at).toLocaleTimeString();
-        const payloadPreview = JSON.stringify(msg.payload || {}).substring(0, 200);
+        const payloadStr = JSON.stringify(msg.payload || {}, null, 2);
+        const payloadPreview = payloadStr.substring(0, 150) + (payloadStr.length > 150 ? '...' : '');
+
+        // Thread info
+        const thread = msg.correlation_id ? threadMap.get(msg.correlation_id) : null;
+        const threadSize = thread ? thread.length : 0;
+        const isHighlighted = activeThreadFilter && msg.correlation_id === activeThreadFilter;
+        const threadLabel = msg.correlation_id
+          ? `<span class="msg-thread-id" onclick="filterThread('${msg.correlation_id}')" title="Click to show conversation thread">🔗 ${threadSize > 1 ? threadSize + ' msgs' : 'thread'} ${msg.correlation_id.substring(0, 8)}...</span>`
+          : '';
 
         return `
-          <div class="message-item">
+          <div class="message-item ${isHighlighted ? 'thread-highlight' : ''}" onclick="openMessageDetail('${msg.message_id}')">
             <div class="msg-header">
               <span class="msg-type ${msg.message_type}">${msg.message_type}</span>
               <span class="msg-time">${time}</span>
+              ${threadLabel}
             </div>
             <div class="msg-route">
               ${esc(senderName)} <span class="arrow">→</span> ${esc(recipientName)}
@@ -704,6 +968,105 @@
         `;
       }).join('');
     }
+
+    function clearFilters() {
+      const searchInput = document.getElementById('msgSearch');
+      const typeFilter = document.getElementById('msgTypeFilter');
+      if (searchInput) searchInput.value = '';
+      if (typeFilter) typeFilter.value = '';
+      activeThreadFilter = null;
+      renderMessages();
+    }
+
+    function filterThread(correlationId) {
+      event.stopPropagation(); // Don't open modal
+      if (activeThreadFilter === correlationId) {
+        activeThreadFilter = null; // Toggle off
+      } else {
+        activeThreadFilter = correlationId;
+      }
+      renderMessages();
+    }
+
+    // ============================================================
+    // Message Detail Modal
+    // ============================================================
+
+    function openMessageDetail(messageId) {
+      const msg = messages.find(m => m.message_id === messageId);
+      if (!msg) return;
+
+      const senderName = getAgentName(msg.sender_agent_id);
+      const recipientName = getAgentName(msg.recipient_agent_id);
+      const time = new Date(msg.created_at).toLocaleString();
+      const payloadJson = JSON.stringify(msg.payload || {}, null, 2);
+
+      // Find related messages in the same thread
+      let threadHtml = '';
+      if (msg.correlation_id) {
+        const thread = messages
+          .filter(m => m.correlation_id === msg.correlation_id)
+          .sort((a, b) => new Date(a.created_at) - new Date(b.created_at));
+
+        if (thread.length > 1) {
+          threadHtml = `
+            <div class="modal-thread">
+              <h3>🔗 Conversation Thread (${thread.length} messages)</h3>
+              ${thread.map(t => {
+                const tSender = getAgentName(t.sender_agent_id);
+                const tTime = new Date(t.created_at).toLocaleTimeString();
+                const isCurrent = t.message_id === messageId;
+                return `<div style="padding:6px 0;${isCurrent ? 'font-weight:600;color:var(--accent);' : 'color:var(--text-dim);'}">
+                  <span class="msg-type ${t.message_type}" style="font-size:10px">${t.message_type}</span>
+                  ${tTime} — ${esc(tSender)}
+                  ${isCurrent ? ' ← viewing' : ''}
+                </div>`;
+              }).join('')}
+            </div>
+          `;
+        }
+      }
+
+      document.getElementById('modalTitle').textContent = `${msg.message_type} — ${senderName}`;
+      document.getElementById('modalBody').innerHTML = `
+        <div class="modal-field">
+          <label>Message ID</label>
+          <div class="value" style="font-size:12px;color:var(--text-dim)">${msg.message_id}</div>
+        </div>
+        <div class="modal-field">
+          <label>Route</label>
+          <div class="value">${esc(senderName)} → ${esc(recipientName)}</div>
+        </div>
+        <div class="modal-field">
+          <label>Type</label>
+          <div class="value"><span class="msg-type ${msg.message_type}">${msg.message_type}</span></div>
+        </div>
+        <div class="modal-field">
+          <label>Timestamp</label>
+          <div class="value">${time}</div>
+        </div>
+        ${msg.correlation_id ? `<div class="modal-field">
+          <label>Correlation ID</label>
+          <div class="value" style="font-size:12px;color:var(--text-dim)">${msg.correlation_id}</div>
+        </div>` : ''}
+        <div class="modal-field">
+          <label>Payload</label>
+          <pre>${esc(payloadJson)}</pre>
+        </div>
+        ${threadHtml}
+      `;
+
+      document.getElementById('modalOverlay').classList.add('open');
+    }
+
+    function closeModal() {
+      document.getElementById('modalOverlay').classList.remove('open');
+    }
+
+    // Close modal on Escape
+    document.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape') closeModal();
+    });
 
     // ============================================================
     // Helpers
