@@ -43,7 +43,13 @@
       color: var(--accent);
     }
 
-    header .status {
+    .header-right {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+
+    .status {
       font-size: 12px;
       padding: 4px 10px;
       border-radius: 12px;
@@ -52,56 +58,117 @@
     }
 
     .status.connected { color: var(--green); border-color: var(--green); }
+    .status.connecting { color: var(--yellow); border-color: var(--yellow); }
     .status.disconnected { color: var(--red); border-color: var(--red); }
 
-    /* Config bar */
-    .config-bar {
-      padding: 12px 24px;
+    .gear-btn {
+      background: none;
+      border: 1px solid var(--border);
+      color: var(--text-dim);
+      width: 32px;
+      height: 32px;
+      border-radius: 6px;
+      cursor: pointer;
+      font-size: 16px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      transition: all 0.15s;
+    }
+
+    .gear-btn:hover {
+      color: var(--text);
+      border-color: var(--accent);
+      background: var(--surface);
+    }
+
+    /* Settings panel (hidden by default) */
+    .settings-panel {
+      display: none;
+      padding: 16px 24px;
       background: var(--surface);
       border-bottom: 1px solid var(--border);
+    }
+
+    .settings-panel.open { display: block; }
+
+    .settings-row {
       display: flex;
       gap: 12px;
-      align-items: center;
+      align-items: flex-end;
       flex-wrap: wrap;
     }
 
-    .config-bar label {
+    .settings-field {
+      flex: 1;
+      min-width: 200px;
+    }
+
+    .settings-field label {
+      display: block;
       font-size: 11px;
       color: var(--text-dim);
       text-transform: uppercase;
       letter-spacing: 0.5px;
+      margin-bottom: 4px;
     }
 
-    .config-bar input {
+    .settings-field input {
+      width: 100%;
       background: var(--bg);
       border: 1px solid var(--border);
       color: var(--text);
-      padding: 6px 10px;
+      padding: 8px 10px;
       border-radius: 4px;
       font-family: inherit;
       font-size: 13px;
-      width: 300px;
     }
 
-    .config-bar button {
-      background: var(--accent);
-      color: white;
+    .settings-actions {
+      display: flex;
+      gap: 8px;
+      align-items: flex-end;
+      padding-bottom: 1px;
+    }
+
+    .btn {
       border: none;
-      padding: 6px 16px;
+      padding: 8px 16px;
       border-radius: 4px;
       font-family: inherit;
       font-size: 13px;
       cursor: pointer;
+      white-space: nowrap;
     }
 
-    .config-bar button:hover { opacity: 0.9; }
+    .btn-primary {
+      background: var(--accent);
+      color: white;
+    }
+
+    .btn-primary:hover { opacity: 0.9; }
+
+    .btn-secondary {
+      background: var(--bg);
+      color: var(--text-dim);
+      border: 1px solid var(--border);
+    }
+
+    .btn-secondary:hover {
+      color: var(--text);
+      border-color: var(--text-dim);
+    }
 
     /* Main layout */
     .main {
       display: grid;
       grid-template-columns: 1fr 1fr;
       gap: 0;
-      height: calc(100vh - 110px);
+      height: calc(100vh - 57px);
+    }
+
+    .main.settings-open {
+      height: calc(100vh - 57px - 85px);
     }
 
     .panel {
@@ -159,15 +226,8 @@
     .status-dot.offline { background: var(--gray); }
     .status-dot.busy { background: var(--yellow); box-shadow: 0 0 6px var(--yellow); }
 
-    .agent-name {
-      font-weight: 600;
-      font-size: 14px;
-    }
-
-    .agent-id {
-      color: var(--text-dim);
-      font-size: 11px;
-    }
+    .agent-name { font-weight: 600; font-size: 14px; }
+    .agent-id { color: var(--text-dim); font-size: 11px; }
 
     .agent-caps {
       display: flex;
@@ -189,6 +249,12 @@
       font-size: 11px;
       color: var(--text-dim);
       margin-top: 4px;
+    }
+
+    .agent-model {
+      font-size: 11px;
+      color: var(--yellow);
+      margin-top: 2px;
     }
 
     /* Message timeline */
@@ -219,16 +285,8 @@
     .msg-type.task_result { background: rgba(34, 197, 94, 0.2); color: var(--green); }
     .msg-type.task_error { background: rgba(239, 68, 68, 0.15); color: var(--red); }
 
-    .msg-time {
-      font-size: 11px;
-      color: var(--text-dim);
-    }
-
-    .msg-route {
-      font-size: 12px;
-      color: var(--text-dim);
-    }
-
+    .msg-time { font-size: 11px; color: var(--text-dim); }
+    .msg-route { font-size: 12px; color: var(--text-dim); }
     .msg-route .arrow { color: var(--accent); margin: 0 4px; }
 
     .msg-payload {
@@ -258,22 +316,31 @@
 <body>
   <header>
     <h1>◉ OACP Observer</h1>
-    <span id="connStatus" class="status disconnected">● Disconnected</span>
+    <div class="header-right">
+      <span id="connStatus" class="status connecting">● Connecting...</span>
+      <button class="gear-btn" onclick="toggleSettings()" title="Settings">⚙</button>
+    </div>
   </header>
 
-  <div class="config-bar">
-    <div>
-      <label>Supabase URL</label><br>
-      <input id="supabaseUrl" placeholder="https://xxx.supabase.co" value="">
+  <!-- Settings panel (hidden by default) -->
+  <div id="settingsPanel" class="settings-panel">
+    <div class="settings-row">
+      <div class="settings-field">
+        <label>Supabase URL</label>
+        <input id="supabaseUrl" placeholder="https://xxx.supabase.co">
+      </div>
+      <div class="settings-field">
+        <label>Anon Key</label>
+        <input id="supabaseKey" type="password" placeholder="eyJ...">
+      </div>
+      <div class="settings-actions">
+        <button class="btn btn-primary" onclick="saveAndConnect()">Save & Reconnect</button>
+        <button class="btn btn-secondary" onclick="resetDefaults()">Reset to Default</button>
+      </div>
     </div>
-    <div>
-      <label>Anon Key</label><br>
-      <input id="supabaseKey" type="password" placeholder="eyJ..." value="">
-    </div>
-    <button onclick="connect()">Connect</button>
   </div>
 
-  <div class="main">
+  <div class="main" id="mainPanel">
     <!-- Agent Registry Panel -->
     <div class="panel">
       <div class="panel-header">
@@ -283,7 +350,7 @@
       <div id="agentList">
         <div class="empty">
           <div class="icon">🤖</div>
-          Connect to Supabase to see registered agents
+          Connecting to registry...
         </div>
       </div>
     </div>
@@ -305,64 +372,102 @@
 
   <script>
     // ============================================================
+    // Default Configuration — connects automatically
+    // ============================================================
+    const DEFAULT_SUPABASE_URL = 'https://zhenbunwugeskqtghjyt.supabase.co';
+    const DEFAULT_SUPABASE_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InpoZW5idW53dWdlc2txdGdoanl0Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzQ5OTM3NDYsImV4cCI6MjA5MDU2OTc0Nn0.hU5C6yESrm0B8-hsXTY-XEYkgLegx-2SdpH8E3RMSGU';
+
+    // ============================================================
     // State
     // ============================================================
-    let supabase = null;
+    let supabaseClient = null;
     let agents = new Map();
     let messages = [];
     let channel = null;
 
-    // Try to load config from localStorage
-    const savedUrl = localStorage.getItem('oacp_supabase_url') || '';
-    const savedKey = localStorage.getItem('oacp_supabase_key') || '';
-    document.getElementById('supabaseUrl').value = savedUrl;
-    document.getElementById('supabaseKey').value = savedKey;
+    // ============================================================
+    // Settings
+    // ============================================================
+    function getConfig() {
+      return {
+        url: localStorage.getItem('oacp_supabase_url') || DEFAULT_SUPABASE_URL,
+        key: localStorage.getItem('oacp_supabase_key') || DEFAULT_SUPABASE_KEY,
+      };
+    }
 
-    // Auto-connect if saved
-    if (savedUrl && savedKey) {
-      setTimeout(() => connect(), 500);
+    function toggleSettings() {
+      const panel = document.getElementById('settingsPanel');
+      const main = document.getElementById('mainPanel');
+      const isOpen = panel.classList.toggle('open');
+      main.classList.toggle('settings-open', isOpen);
+
+      if (isOpen) {
+        const config = getConfig();
+        document.getElementById('supabaseUrl').value = config.url;
+        document.getElementById('supabaseKey').value = config.key;
+      }
+    }
+
+    function saveAndConnect() {
+      const url = document.getElementById('supabaseUrl').value.trim();
+      const key = document.getElementById('supabaseKey').value.trim();
+
+      if (!url || !key) {
+        alert('Please enter both Supabase URL and Anon Key');
+        return;
+      }
+
+      localStorage.setItem('oacp_supabase_url', url);
+      localStorage.setItem('oacp_supabase_key', key);
+
+      // Close settings and reconnect
+      document.getElementById('settingsPanel').classList.remove('open');
+      document.getElementById('mainPanel').classList.remove('settings-open');
+      connect();
+    }
+
+    function resetDefaults() {
+      localStorage.removeItem('oacp_supabase_url');
+      localStorage.removeItem('oacp_supabase_key');
+      document.getElementById('supabaseUrl').value = DEFAULT_SUPABASE_URL;
+      document.getElementById('supabaseKey').value = DEFAULT_SUPABASE_KEY;
     }
 
     // ============================================================
     // Connection
     // ============================================================
     async function connect() {
-      const url = document.getElementById('supabaseUrl').value.trim();
-      const key = document.getElementById('supabaseKey').value.trim();
-
-      if (!url || !key) {
-        alert('Please enter Supabase URL and Anon Key');
-        return;
-      }
-
-      // Save to localStorage
-      localStorage.setItem('oacp_supabase_url', url);
-      localStorage.setItem('oacp_supabase_key', key);
+      const config = getConfig();
+      setConnected('connecting');
 
       try {
-        // Initialize Supabase client
-        supabase = window.supabase.createClient(url, key);
+        // Clean up existing connection
+        if (channel && supabaseClient) {
+          supabaseClient.removeChannel(channel);
+          channel = null;
+        }
 
-        // Load existing data
+        supabaseClient = window.supabase.createClient(config.url, config.key);
+
         await loadAgents();
         await loadMessages();
-
-        // Subscribe to Realtime changes
         subscribeToChanges();
 
-        setConnected(true);
+        setConnected('connected');
       } catch (err) {
         console.error('Connection failed:', err);
-        setConnected(false);
-        alert('Connection failed: ' + err.message);
+        setConnected('disconnected');
       }
     }
 
-    function setConnected(connected) {
+    function setConnected(state) {
       const el = document.getElementById('connStatus');
-      if (connected) {
+      if (state === 'connected') {
         el.textContent = '● Connected';
         el.className = 'status connected';
+      } else if (state === 'connecting') {
+        el.textContent = '● Connecting...';
+        el.className = 'status connecting';
       } else {
         el.textContent = '● Disconnected';
         el.className = 'status disconnected';
@@ -373,7 +478,7 @@
     // Data Loading
     // ============================================================
     async function loadAgents() {
-      const { data, error } = await supabase
+      const { data, error } = await supabaseClient
         .from('agents')
         .select('*')
         .order('created_at', { ascending: false });
@@ -388,7 +493,7 @@
     }
 
     async function loadMessages() {
-      const { data, error } = await supabase
+      const { data, error } = await supabaseClient
         .from('messages')
         .select('*')
         .order('created_at', { ascending: false })
@@ -404,10 +509,10 @@
     // ============================================================
     function subscribeToChanges() {
       if (channel) {
-        supabase.removeChannel(channel);
+        supabaseClient.removeChannel(channel);
       }
 
-      channel = supabase
+      channel = supabaseClient
         .channel('oacp-dashboard')
         .on('postgres_changes', {
           event: '*',
@@ -437,7 +542,7 @@
           }, 50);
         })
         .subscribe((status) => {
-          setConnected(status === 'SUBSCRIBED');
+          setConnected(status === 'SUBSCRIBED' ? 'connected' : 'connecting');
         });
     }
 
@@ -452,11 +557,10 @@
       countEl.textContent = `${agentArray.length} agent${agentArray.length !== 1 ? 's' : ''}`;
 
       if (agentArray.length === 0) {
-        container.innerHTML = `<div class="empty"><div class="icon">🤖</div>No agents registered yet</div>`;
+        container.innerHTML = `<div class="empty"><div class="icon">🤖</div>No agents registered yet.<br>Run <code>npm run agent:research</code> to start one.</div>`;
         return;
       }
 
-      // Sort: online first, then by name
       agentArray.sort((a, b) => {
         if (a.status === 'online' && b.status !== 'online') return -1;
         if (a.status !== 'online' && b.status === 'online') return 1;
@@ -472,6 +576,17 @@
           ? timeAgo(new Date(agent.last_seen_at))
           : 'never';
 
+        // Model info from metadata
+        const meta = agent.metadata || {};
+        const model = meta.model;
+        const modelStr = model
+          ? `${model.provider || ''}/${model.name || ''} [${(model.modalities || []).join(', ')}]`
+          : '';
+
+        const langs = meta.languages
+          ? meta.languages.join(', ')
+          : '';
+
         return `
           <div class="agent-card">
             <div class="agent-header">
@@ -480,9 +595,11 @@
               <span class="agent-id">${agent.agent_id.substring(0, 8)}...</span>
             </div>
             <div class="agent-caps">${caps}</div>
+            ${modelStr ? `<div class="agent-model">🤖 ${esc(modelStr)}</div>` : ''}
             <div class="agent-meta">
               ${agent.owner_handle ? `@${esc(agent.owner_handle)} · ` : ''}
               ${agent.status} · last seen ${lastSeen}
+              ${langs ? ` · 🌐 ${esc(langs)}` : ''}
             </div>
           </div>
         `;
@@ -496,7 +613,7 @@
       countEl.textContent = `${messages.length} message${messages.length !== 1 ? 's' : ''}`;
 
       if (messages.length === 0) {
-        container.innerHTML = `<div class="empty"><div class="icon">💬</div>No messages yet</div>`;
+        container.innerHTML = `<div class="empty"><div class="icon">💬</div>No messages yet.<br>Run the demo to see messages flow.</div>`;
         return;
       }
 
@@ -548,6 +665,11 @@
     setInterval(() => {
       if (agents.size > 0) renderAgents();
     }, 10000);
+
+    // ============================================================
+    // Auto-connect on load
+    // ============================================================
+    connect();
   </script>
 </body>
 </html>
