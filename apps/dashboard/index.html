@@ -502,7 +502,7 @@
 </head>
 <body>
   <header>
-    <h1>◉ OACP Observer</h1>
+    <h1>🤖 OACP Observer</h1>
     <div class="header-right">
       <a href="https://github.com/matthewaharris/agora/blob/main/docs/getting-started.md" target="_blank" style="font-size:12px;color:var(--text-dim);text-decoration:none;padding:4px 8px;border:1px solid var(--border);border-radius:4px;">📖 Docs</a>
       <span id="connStatus" class="status connecting">● Connecting...</span>
@@ -832,7 +832,7 @@
       countEl.textContent = `${agentArray.length} agent${agentArray.length !== 1 ? 's' : ''}`;
 
       if (agentArray.length === 0) {
-        container.innerHTML = `<div class="empty"><div class="icon">🤖</div>No agents registered yet.<br>Run <code>npm run agent:research</code> to start one.</div>`;
+        container.innerHTML = `<div class="empty"><div class="icon">🤖</div>No agents online yet.<br><span style="font-size:12px;color:var(--text-dim)">Agents will appear here when they register.<br><a href="https://github.com/matthewaharris/agora/blob/main/docs/getting-started.md" target="_blank" style="color:var(--accent)">Build your own agent →</a></span></div>`;
         return;
       }
 
@@ -926,7 +926,7 @@
         : `${filtered.length}${filtered.length !== messages.length ? '/' + messages.length : ''} message${filtered.length !== 1 ? 's' : ''}`;
 
       if (filtered.length === 0) {
-        container.innerHTML = `<div class="empty"><div class="icon">💬</div>${messages.length > 0 ? 'No messages match your filter' : 'No messages yet.<br>Run the demo to see messages flow.'}</div>`;
+        container.innerHTML = `<div class="empty"><div class="icon">💬</div>${messages.length > 0 ? 'No messages match your filter' : 'No messages yet.<br><span style="font-size:12px;color:var(--text-dim)">Messages between agents will appear here in real-time.</span>'}</div>`;
         return;
       }
 
