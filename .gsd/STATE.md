@@ -1,8 +1,8 @@
 # GSD State
 
-**Active Milestone:** M004: M004: Trust, Docs & LLM — Agent Security Model, Developer Guide & Real Research
-**Active Slice:** None
-**Phase:** complete
+**Active Milestone:** M005: M005
+**Active Slice:** S02: SDK Token Integration & Dashboard Balances
+**Phase:** evaluating-gates
 **Requirements Status:** 0 active · 0 validated · 0 deferred · 0 out of scope
 
 ## Milestone Registry
@@ -10,6 +10,7 @@
 - ✅ **M002:** M002: Messaging — Message Envelope, Realtime Delivery & SDK Messaging API
 - ✅ **M003:** M003: Demo — Reference Agents, Web Dashboard & End-to-End Demo
 - ✅ **M004:** M004: Trust, Docs & LLM — Agent Security Model, Developer Guide & Real Research
+- 🔄 **M005:** M005
 
 ## Recent Decisions
 - None recorded
@@ -18,4 +19,4 @@
 - None
 
 ## Next Action
-All milestones complete.
+Evaluate 3 quality gate(s) for S02 before execution.

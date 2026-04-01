@@ -157,6 +157,7 @@ export class OACPAgent {
       structuredMeta.action_specs = this.actionSpecs.map((s) => ({
         name: s.name,
         description: s.description,
+        price: s.price || 0,
       }));
     }
 
@@ -333,6 +334,89 @@ export class OACPAgent {
     }
 
     return (await response.json()) as DiscoverResponse;
+  }
+
+  // ============================================================
+  // Token Economy
+  // ============================================================
+
+  /**
+   * Get this agent's token balance.
+   */
+  async getBalance(): Promise<number> {
+    if (!this.agentId) throw new Error('Agent must be registered');
+
+    const response = await fetch(`${this.apiBaseUrl}/balance?agent_id=${this.agentId}`);
+    if (!response.ok) return 0;
+
+    // deno-lint-ignore no-explicit-any
+    const data = (await response.json()) as any;
+    return data.balance as number;
+  }
+
+  /**
+   * Get this agent's transaction history.
+   */
+  async getTransactions(options: { limit?: number; type?: string } = {}): Promise<{
+    transactions: Array<Record<string, unknown>>;
+    total: number;
+  }> {
+    if (!this.agentId || !this.registryToken) throw new Error('Agent must be registered');
+
+    const params = new URLSearchParams();
+    params.set('agent_id', this.agentId);
+    if (options.limit) params.set('limit', String(options.limit));
+    if (options.type) params.set('type', options.type);
+
+    const response = await fetch(`${this.apiBaseUrl}/transactions?${params.toString()}`, {
+      headers: { Authorization: `Bearer ${this.registryToken}` },
+    });
+
+    if (!response.ok) {
+      const error = (await response.json()) as ApiError;
+      throw new Error(`Get transactions failed: ${error.error}`);
+    }
+
+    // deno-lint-ignore no-explicit-any
+    return (await response.json()) as any;
+  }
+
+  /**
+   * Transfer tokens to another agent.
+   * @private — used internally for task payments
+   */
+  private async transferTokens(
+    toAgentId: string,
+    amount: number,
+    messageId?: string,
+    description?: string,
+  ): Promise<string> {
+    if (!this.agentId || !this.registryToken) throw new Error('Agent must be registered');
+
+    const response = await fetch(`${this.apiBaseUrl}/transfer`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${this.registryToken}`,
+      },
+      body: JSON.stringify({
+        from_agent_id: this.agentId,
+        to_agent_id: toAgentId,
+        amount,
+        type: 'task_payment',
+        message_id: messageId || null,
+        description: description || `Payment for task`,
+      }),
+    });
+
+    if (!response.ok) {
+      const error = (await response.json()) as ApiError;
+      throw new Error(`Transfer failed: ${error.error}`);
+    }
+
+    // deno-lint-ignore no-explicit-any
+    const data = (await response.json()) as any;
+    return data.transaction_id;
   }
 
   // ============================================================
@@ -666,9 +750,41 @@ export class OACPAgent {
 
       // If handler returns a result, auto-send task_result
       if (result && typeof result === 'object') {
-        await this.send(senderId, 'task_result', result, {
+        const resultMsgId = await this.send(senderId, 'task_result', result, {
           correlationId: msg.correlation_id,
         });
+
+        // Auto-collect payment if this action has a price
+        if (action.price && action.price > 0 && this.agentId) {
+          try {
+            // Call server-side payment collection — server verifies the task was real
+            const response = await fetch(`${this.apiBaseUrl}/collect-payment`, {
+              method: 'POST',
+              headers: {
+                'Content-Type': 'application/json',
+                Authorization: `Bearer ${this.registryToken}`,
+              },
+              body: JSON.stringify({
+                provider_agent_id: this.agentId,
+                requester_agent_id: senderId,
+                amount: action.price,
+                message_id: msg.message_id,
+                action_name: action.name,
+              }),
+            });
+
+            if (response.ok) {
+              // deno-lint-ignore no-explicit-any
+              const data = (await response.json()) as any;
+              console.log(`[OACP] 💰 Collected ${action.price} tokens from ${senderId.substring(0, 8)}... (tx: ${data.transaction_id})`);
+            } else {
+              const errText = await response.text();
+              console.warn(`[OACP] ⚠️ Payment collection failed (${response.status}): ${errText.substring(0, 100)}`);
+            }
+          } catch (payErr) {
+            console.warn(`[OACP] ⚠️ Payment collection error: ${payErr instanceof Error ? payErr.message : payErr}`);
+          }
+        }
       }
     } catch (err) {
       const errorMsg = err instanceof Error ? err.message : 'Unknown error';

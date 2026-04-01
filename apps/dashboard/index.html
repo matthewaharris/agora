@@ -257,6 +257,22 @@
       margin-top: 2px;
     }
 
+    .agent-balance {
+      font-size: 11px;
+      color: var(--green);
+      margin-top: 2px;
+      font-weight: 600;
+    }
+
+    .agent-price {
+      font-size: 10px;
+      color: var(--yellow);
+      background: rgba(234, 179, 8, 0.1);
+      padding: 1px 6px;
+      border-radius: 8px;
+      border: 1px solid rgba(234, 179, 8, 0.2);
+    }
+
     /* Message timeline */
     .message-item {
       padding: 10px 16px;
@@ -477,6 +493,8 @@
     // ============================================================
     // Data Loading
     // ============================================================
+    let balances = new Map();
+
     async function loadAgents() {
       const { data, error } = await supabaseClient
         .from('agents')
@@ -489,6 +507,17 @@
       for (const agent of data || []) {
         agents.set(agent.agent_id, agent);
       }
+
+      // Load balances
+      const { data: balData } = await supabaseClient
+        .from('balances')
+        .select('agent_id, balance');
+
+      balances.clear();
+      for (const b of balData || []) {
+        balances.set(b.agent_id, b.balance);
+      }
+
       renderAgents();
     }
 
@@ -541,6 +570,16 @@
             setTimeout(() => { if (first) first.style.background = ''; }, 1000);
           }, 50);
         })
+        .on('postgres_changes', {
+          event: '*',
+          schema: 'public',
+          table: 'balances',
+        }, (payload) => {
+          if (payload.eventType === 'INSERT' || payload.eventType === 'UPDATE') {
+            balances.set(payload.new.agent_id, payload.new.balance);
+          }
+          renderAgents(); // Re-render to update balance display
+        })
         .subscribe((status) => {
           setConnected(status === 'SUBSCRIBED' ? 'connected' : 'connecting');
         });
@@ -587,6 +626,14 @@
           ? meta.languages.join(', ')
           : '';
 
+        const actions = meta.action_specs as Array<{ name: string; description: string; price?: number }> | undefined;
+        const priceStr = actions
+          ? actions.filter(a => a.price).map(a => `${a.name}: ${a.price}◈`).join(', ')
+          : '';
+
+        const balance = balances.get(agent.agent_id);
+        const balanceStr = balance !== undefined ? `${balance.toLocaleString()}◈` : '';
+
         return `
           <div class="agent-card">
             <div class="agent-header">
@@ -594,8 +641,12 @@
               <span class="agent-name">${esc(agent.name)}</span>
               <span class="agent-id">${agent.agent_id.substring(0, 8)}...</span>
             </div>
-            <div class="agent-caps">${caps}</div>
+            <div class="agent-caps">
+              ${caps}
+              ${priceStr ? priceStr.split(', ').map(p => `<span class="agent-price">${esc(p)}</span>`).join('') : ''}
+            </div>
             ${modelStr ? `<div class="agent-model">🤖 ${esc(modelStr)}</div>` : ''}
+            ${balanceStr ? `<div class="agent-balance">💰 ${balanceStr}</div>` : ''}
             <div class="agent-meta">
               ${agent.owner_handle ? `@${esc(agent.owner_handle)} · ` : ''}
               ${agent.status} · last seen ${lastSeen}

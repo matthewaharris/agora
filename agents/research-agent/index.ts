@@ -41,6 +41,7 @@ if (!SUPABASE_URL || !SUPABASE_ANON_KEY) {
 const summarizeAction: ActionSpec = {
   name: 'summarize-text',
   description: 'Summarize a topic or text passage in under N words',
+  price: 10,  // 10 tokens per summarization
   inputSchema: {
     type: 'object',
     properties: {

@@ -38,6 +38,7 @@ if (!ANTHROPIC_API_KEY) {
 const reviewAction: ActionSpec = {
   name: 'review-code',
   description: 'Review a code snippet for bugs, security issues, and improvements',
+  price: 25,  // 25 tokens per code review
   inputSchema: {
     type: 'object',
     properties: {

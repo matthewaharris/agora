@@ -629,6 +629,248 @@ async function handleGetMessages(req: Request): Promise<Response> {
   });
 }
 
+// ============================================================
+// Token Economy
+// ============================================================
+
+/**
+ * GET /balance — Get an agent's token balance
+ * Public — anyone can see balances.
+ */
+async function handleGetBalance(req: Request): Promise<Response> {
+  const url = new URL(req.url);
+  const agentId = url.searchParams.get('agent_id');
+
+  if (!agentId) {
+    return errorResponse('agent_id query parameter is required', 400);
+  }
+
+  const idErrors = validateUUID(agentId, 'agent_id');
+  if (idErrors.length > 0) return validationErrorResponse(idErrors);
+
+  const supabase = getSupabaseAdmin();
+  const { data, error } = await supabase
+    .from('balances')
+    .select('agent_id, balance, updated_at')
+    .eq('agent_id', agentId)
+    .single();
+
+  if (error || !data) {
+    return errorResponse('Agent balance not found', 404);
+  }
+
+  return jsonResponse(data);
+}
+
+/**
+ * GET /transactions — Get transaction history for an agent
+ * Auth required — only the agent can see their own transactions.
+ */
+async function handleGetTransactions(req: Request): Promise<Response> {
+  const url = new URL(req.url);
+  const agentId = url.searchParams.get('agent_id');
+  const limit = Math.min(100, Math.max(1, parseInt(url.searchParams.get('limit') || '50', 10)));
+  const txType = url.searchParams.get('type');
+
+  if (!agentId) {
+    return errorResponse('agent_id query parameter is required', 400);
+  }
+
+  const idErrors = validateUUID(agentId, 'agent_id');
+  if (idErrors.length > 0) return validationErrorResponse(idErrors);
+
+  // Auth check
+  const token = extractBearerToken(req);
+  if (!token) {
+    return errorResponse('Authorization required', 401);
+  }
+
+  const supabase = getSupabaseAdmin();
+  const tokenHash = await hashToken(token);
+
+  const { data: agent, error: authError } = await supabase
+    .from('agents')
+    .select('agent_id, registry_token')
+    .eq('agent_id', agentId)
+    .single();
+
+  if (authError || !agent || agent.registry_token !== tokenHash) {
+    return errorResponse('Unauthorized', 403);
+  }
+
+  // Query transactions where agent is sender or recipient
+  let query = supabase
+    .from('transactions')
+    .select('*', { count: 'exact' })
+    .or(`from_agent_id.eq.${agentId},to_agent_id.eq.${agentId}`);
+
+  if (txType) {
+    query = query.eq('type', txType);
+  }
+
+  query = query.order('created_at', { ascending: false }).limit(limit);
+
+  const { data: txns, error: txError, count } = await query;
+
+  if (txError) {
+    console.error('[OACP] Transaction query error:', txError);
+    return errorResponse('Failed to retrieve transactions', 500);
+  }
+
+  return jsonResponse({ transactions: txns || [], total: count || 0, limit });
+}
+
+/**
+ * POST /transfer — Transfer tokens between agents
+ * Auth required — sender must authenticate.
+ */
+async function handleTransfer(req: Request): Promise<Response> {
+  let body: Record<string, unknown>;
+  try {
+    body = await req.json();
+  } catch {
+    return errorResponse('Invalid JSON body', 400);
+  }
+
+  const requiredErrors = validateRequired(body, ['from_agent_id', 'to_agent_id', 'amount']);
+  if (requiredErrors.length > 0) return validationErrorResponse(requiredErrors);
+
+  const fromErrors = validateUUID(body.from_agent_id, 'from_agent_id');
+  const toErrors = validateUUID(body.to_agent_id, 'to_agent_id');
+  if (fromErrors.length > 0) return validationErrorResponse(fromErrors);
+  if (toErrors.length > 0) return validationErrorResponse(toErrors);
+
+  const amount = body.amount as number;
+  if (typeof amount !== 'number' || amount <= 0 || !Number.isInteger(amount)) {
+    return errorResponse('amount must be a positive integer', 400);
+  }
+
+  // Auth check
+  const token = extractBearerToken(req);
+  if (!token) {
+    return errorResponse('Authorization required', 401);
+  }
+
+  const supabase = getSupabaseAdmin();
+  const tokenHash = await hashToken(token);
+
+  const { data: sender, error: authError } = await supabase
+    .from('agents')
+    .select('agent_id, registry_token')
+    .eq('agent_id', body.from_agent_id)
+    .single();
+
+  if (authError || !sender || sender.registry_token !== tokenHash) {
+    return errorResponse('Unauthorized', 403);
+  }
+
+  // Execute atomic transfer
+  const { data: txId, error: transferError } = await supabase
+    .rpc('oacp_transfer', {
+      p_from_agent_id: body.from_agent_id,
+      p_to_agent_id: body.to_agent_id,
+      p_amount: amount,
+      p_type: (body.type as string) || 'task_payment',
+      p_message_id: (body.message_id as string) || null,
+      p_description: (body.description as string) || '',
+    });
+
+  if (transferError) {
+    const msg = transferError.message || 'Transfer failed';
+    if (msg.includes('Insufficient balance')) {
+      return errorResponse('Insufficient balance', 402, {
+        required: amount,
+        detail: msg,
+      });
+    }
+    console.error('[OACP] Transfer error:', transferError);
+    return errorResponse(msg, 500);
+  }
+
+  console.log(
+    `[OACP] Transfer: ${amount} tokens ${(body.from_agent_id as string).substring(0, 8)}... → ${(body.to_agent_id as string).substring(0, 8)}... (tx: ${txId})`,
+  );
+
+  return jsonResponse({ transaction_id: txId, amount, status: 'completed' }, 201);
+}
+
+/**
+ * POST /collect-payment — Provider collects payment after completing a task
+ * Server verifies the task_result message exists before debiting requester.
+ */
+async function handleCollectPayment(req: Request): Promise<Response> {
+  let body: Record<string, unknown>;
+  try {
+    body = await req.json();
+  } catch {
+    return errorResponse('Invalid JSON body', 400);
+  }
+
+  const requiredErrors = validateRequired(body, ['provider_agent_id', 'requester_agent_id', 'amount', 'message_id']);
+  if (requiredErrors.length > 0) return validationErrorResponse(requiredErrors);
+
+  // Auth — provider must authenticate
+  const token = extractBearerToken(req);
+  if (!token) return errorResponse('Authorization required', 401);
+
+  const supabase = getSupabaseAdmin();
+  const tokenHash = await hashToken(token);
+
+  const { data: provider, error: authError } = await supabase
+    .from('agents')
+    .select('agent_id, registry_token')
+    .eq('agent_id', body.provider_agent_id)
+    .single();
+
+  if (authError || !provider || provider.registry_token !== tokenHash) {
+    return errorResponse('Unauthorized', 403);
+  }
+
+  // Verify the original task_request message exists and was sent by the requester to this provider
+  const { data: origMsg, error: msgError } = await supabase
+    .from('messages')
+    .select('message_id, sender_agent_id, recipient_agent_id, message_type')
+    .eq('message_id', body.message_id)
+    .single();
+
+  if (msgError || !origMsg) {
+    return errorResponse('Original task message not found', 404);
+  }
+
+  if (origMsg.sender_agent_id !== body.requester_agent_id || origMsg.recipient_agent_id !== body.provider_agent_id) {
+    return errorResponse('Message does not match the requester/provider pair', 400);
+  }
+
+  const amount = body.amount as number;
+  if (typeof amount !== 'number' || amount <= 0 || !Number.isInteger(amount)) {
+    return errorResponse('amount must be a positive integer', 400);
+  }
+
+  // Execute atomic transfer: requester → provider
+  const { data: txId, error: transferError } = await supabase
+    .rpc('oacp_transfer', {
+      p_from_agent_id: body.requester_agent_id,
+      p_to_agent_id: body.provider_agent_id,
+      p_amount: amount,
+      p_type: 'task_payment',
+      p_message_id: body.message_id,
+      p_description: `Payment for ${body.action_name || 'task'} (msg: ${(body.message_id as string).substring(0, 8)}...)`,
+    });
+
+  if (transferError) {
+    const msg = transferError.message || 'Transfer failed';
+    if (msg.includes('Insufficient balance')) {
+      return errorResponse('Requester has insufficient balance', 402, { required: amount, detail: msg });
+    }
+    console.error('[OACP] Payment collection error:', transferError);
+    return errorResponse(msg, 500);
+  }
+
+  console.log(`[OACP] 💰 Payment: ${amount} tokens from ${(body.requester_agent_id as string).substring(0, 8)}... → ${(body.provider_agent_id as string).substring(0, 8)}...`);
+
+  return jsonResponse({ transaction_id: txId, amount, status: 'collected' }, 201);
+}
+
 /**
  * Stub handler for unimplemented routes.
  */
@@ -661,6 +903,18 @@ const routes: Record<string, Record<string, RouteHandler>> = {
   },
   '/messages': {
     GET: (req) => handleGetMessages(req),
+  },
+  '/balance': {
+    GET: (req) => handleGetBalance(req),
+  },
+  '/transactions': {
+    GET: (req) => handleGetTransactions(req),
+  },
+  '/transfer': {
+    POST: (req) => handleTransfer(req),
+  },
+  '/collect-payment': {
+    POST: (req) => handleCollectPayment(req),
   },
 };
 

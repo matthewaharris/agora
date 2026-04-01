@@ -64,6 +64,9 @@ export interface ActionSpec {
 
   /** Optional JSON Schema for the result payload */
   outputSchema?: SimpleSchema;
+
+  /** Token price for this action (0 = free, default: 0) */
+  price?: number;
 }
 
 // ============================================================

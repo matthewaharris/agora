@@ -39,6 +39,7 @@ if (!ANTHROPIC_API_KEY) {
 const sentimentAction: ActionSpec = {
   name: 'analyze-sentiment',
   description: 'Analyze text for sentiment, emotion, tone, and key phrases',
+  price: 5,  // 5 tokens per analysis
   inputSchema: {
     type: 'object',
     properties: {
