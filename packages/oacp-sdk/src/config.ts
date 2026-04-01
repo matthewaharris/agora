@@ -2,6 +2,8 @@
  * OACP SDK — Agent Configuration
  */
 
+import type { ActionSpec, TrustPolicy } from './trust.js';
+
 export interface AgentConfig {
   /** Display name for the agent */
   name: string;
@@ -35,6 +37,12 @@ export interface AgentConfig {
 
   /** Heartbeat interval in milliseconds (default: 30000) */
   heartbeatIntervalMs?: number;
+
+  /** Action specs declaring what this agent can do */
+  actionSpecs?: ActionSpec[];
+
+  /** Trust policy controlling who can send tasks to this agent */
+  trustPolicy?: TrustPolicy;
 
   /**
    * Base URL for OACP API (default: {supabaseUrl}/functions/v1/oacp)

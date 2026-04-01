@@ -3,7 +3,8 @@
  *
  * A reference agent that:
  * - Registers with the OACP Registry as 'research-summarization'
- * - Listens for task_request messages
+ * - Declares a 'summarize-text' action with input schema
+ * - Validates all incoming tasks against the action spec
  * - Processes research tasks (summarization)
  * - Returns task_result with the summary
  *
@@ -17,7 +18,7 @@
 
 import 'dotenv/config';
 import { OACPAgent } from 'oacp-sdk';
-import type { MessageEnvelope } from 'oacp-sdk';
+import type { ActionSpec, MessageEnvelope } from 'oacp-sdk';
 
 // ============================================================
 // Configuration
@@ -33,33 +34,35 @@ if (!SUPABASE_URL || !SUPABASE_ANON_KEY) {
 }
 
 // ============================================================
-// Research Summarization Logic
+// Action Spec — declares what this agent can do
 // ============================================================
 
-/**
- * Process a research task and produce a summary.
- *
- * In a production agent, this would call an LLM API (OpenAI, Anthropic, etc.).
- * For the demo, we return a pre-built summary about the topic.
- */
-async function processResearchTask(
-  task: string,
-): Promise<{ summary: string; word_count: number; source: string }> {
-  console.log(`[Research] Processing: "${task}"`);
+const summarizeAction: ActionSpec = {
+  name: 'summarize-text',
+  description: 'Summarize a topic or text passage in under N words',
+  inputSchema: {
+    type: 'object',
+    properties: {
+      task: {
+        type: 'string',
+        description: 'Topic or text to summarize',
+        minLength: 3,
+        maxLength: 2000,
+      },
+      max_words: {
+        type: 'number',
+        description: 'Maximum words in the summary',
+        minimum: 10,
+        maximum: 1000,
+      },
+    },
+    required: ['task'],
+  },
+};
 
-  // Simulate processing delay (would be LLM call in production)
-  await new Promise((r) => setTimeout(r, 2000 + Math.random() * 1000));
-
-  // Generate a contextual summary based on the task
-  const summary = generateSummary(task);
-  const wordCount = summary.split(/\s+/).length;
-
-  return {
-    summary,
-    word_count: wordCount,
-    source: 'oacp-research-agent/v0.1.0',
-  };
-}
+// ============================================================
+// Research Summarization Logic
+// ============================================================
 
 /**
  * Generate a summary. In production, this calls an LLM.
@@ -95,7 +98,6 @@ function generateSummary(task: string): string {
     );
   }
 
-  // Default response for any topic
   return (
     `Research summary for "${task}": ` +
     'This topic spans multiple domains and is actively evolving. ' +
@@ -119,44 +121,37 @@ const agent = new OACPAgent({
   supabaseAnonKey: SUPABASE_ANON_KEY,
   keypairPath: './.oacp-keypair.json',
   heartbeatIntervalMs: 30_000,
+  actionSpecs: [summarizeAction],
+  trustPolicy: {
+    allowedSenders: 'open', // Accept tasks from any registered agent
+    requireSignature: true,
+  },
 });
 
 // ============================================================
-// Task Handler
+// Register Action with Trust Pipeline
 // ============================================================
 
-async function handleTaskRequest(msg: MessageEnvelope): Promise<void> {
-  const payload = msg.payload as Record<string, unknown>;
-  const task = (payload.task as string) || 'No task specified';
-  const correlationId = msg.correlation_id;
+agent.registerAction(summarizeAction, async (payload) => {
+  const task = payload.task as string;
 
-  console.log(`\n📨 Task received from ${msg.sender_agent_id.substring(0, 8)}...`);
-  console.log(`   Task: "${task}"`);
-  console.log(`   Correlation: ${correlationId || 'none'}`);
+  console.log(`\n📨 Processing: "${task}"`);
 
-  try {
-    // Process the research task
-    const result = await processResearchTask(task);
+  // Simulate processing delay
+  await new Promise((r) => setTimeout(r, 2000 + Math.random() * 1000));
 
-    // Send task_result back
-    await agent.send(msg.sender_agent_id, 'task_result', result, {
-      correlationId: correlationId,
-    });
+  const summary = generateSummary(task);
+  const wordCount = summary.split(/\s+/).length;
 
-    console.log(`✅ Result sent (${result.word_count} words)`);
-  } catch (err) {
-    const errorMsg = err instanceof Error ? err.message : 'Unknown error';
-    console.error(`❌ Task failed: ${errorMsg}`);
+  console.log(`✅ Summary generated (${wordCount} words)`);
 
-    // Send task_error back
-    await agent.send(msg.sender_agent_id, 'task_error', {
-      error: errorMsg,
-      task,
-    }, {
-      correlationId: correlationId,
-    });
-  }
-}
+  // Returning an object auto-sends task_result
+  return {
+    summary,
+    word_count: wordCount,
+    source: 'oacp-research-agent/v0.1.0',
+  };
+});
 
 // ============================================================
 // Main
@@ -165,22 +160,16 @@ async function handleTaskRequest(msg: MessageEnvelope): Promise<void> {
 async function main() {
   console.log('🔬 OACP Research Agent starting...\n');
 
-  // Register
   const agentId = await agent.register();
   console.log(`📝 Registered as ${agentId}`);
   console.log(`🔑 Public key: ${agent.getPublicKey().substring(0, 16)}...`);
 
-  // Start heartbeat
   agent.startHeartbeat();
 
-  // Listen for task requests
-  agent.on('task_request', (msg) => {
-    handleTaskRequest(msg as MessageEnvelope).catch(console.error);
-  });
-
   console.log('\n⏳ Waiting for task requests... (Ctrl+C to stop)\n');
+  console.log('   This agent only accepts "summarize-text" actions.');
+  console.log('   Other requests will be rejected with a clear error.\n');
 
-  // Graceful shutdown
   const shutdown = async () => {
     console.log('\n🛑 Shutting down...');
     await agent.shutdown();
@@ -190,7 +179,6 @@ async function main() {
   process.on('SIGINT', shutdown);
   process.on('SIGTERM', shutdown);
 
-  // Keep running
   await new Promise(() => {});
 }
 

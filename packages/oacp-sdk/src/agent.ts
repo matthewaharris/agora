@@ -29,6 +29,15 @@ import {
   canonicalizeMessage,
   type OACPKeypair,
 } from './crypto.js';
+import {
+  validatePayload,
+  isSenderAllowed,
+  matchAction,
+  DEFAULT_TRUST_POLICY,
+  type ActionSpec,
+  type TrustPolicy,
+  type ValidationResult,
+} from './trust.js';
 import type {
   RegisterResponse,
   ReregisterResponse,
@@ -58,6 +67,12 @@ export class OACPAgent {
   // deno-lint-ignore no-explicit-any
   private supabaseClient: any = null;
 
+  // Trust model
+  private actionSpecs: ActionSpec[] = [];
+  private trustPolicy: TrustPolicy;
+  // deno-lint-ignore no-explicit-any
+  private actionHandlers: Map<string, (payload: Record<string, unknown>, msg: any) => Promise<Record<string, unknown> | void>> = new Map();
+
   constructor(config: AgentConfig) {
     this.config = config;
 
@@ -70,9 +85,18 @@ export class OACPAgent {
       config.apiBaseUrl ||
       `${config.supabaseUrl}/functions/v1/oacp`;
 
+    // Trust model
+    this.actionSpecs = config.actionSpecs || [];
+    this.trustPolicy = config.trustPolicy || DEFAULT_TRUST_POLICY;
+
     console.log(
       `[OACP] Agent "${config.name}" initialized (pubkey: ${this.keypair.publicKey.substring(0, 16)}...)`,
     );
+    if (this.actionSpecs.length > 0) {
+      console.log(
+        `[OACP] Actions: ${this.actionSpecs.map((s) => s.name).join(', ')}`,
+      );
+    }
   }
 
   // ============================================================
@@ -124,6 +148,17 @@ export class OACPAgent {
     if (this.config.protocolsSupported) body.protocols_supported = this.config.protocolsSupported;
     if (this.config.metadata) body.metadata = this.config.metadata;
 
+    // Include action specs in metadata so other agents can see what we do
+    if (this.actionSpecs.length > 0) {
+      body.metadata = {
+        ...(body.metadata as Record<string, unknown> || {}),
+        action_specs: this.actionSpecs.map((s) => ({
+          name: s.name,
+          description: s.description,
+        })),
+      };
+    }
+
     // Re-registration: include agent_id and auth token
     if (this.agentId && this.registryToken) {
       body.agent_id = this.agentId;
@@ -160,6 +195,12 @@ export class OACPAgent {
       this.registryToken = reg.registry_token;
       this.registered = true;
       console.log(`[OACP] Registered as ${reg.agent_id}`);
+
+      // Start Realtime if handlers were registered before register() was called
+      if (this.messageHandlers.size > 0) {
+        this.startRealtimeSubscription();
+      }
+
       return reg.agent_id;
     } else {
       // Re-registration
@@ -437,10 +478,17 @@ export class OACPAgent {
 
   /**
    * Start Supabase Realtime subscription for incoming messages.
+   * Called automatically after register() if handlers are registered.
    * @private
    */
   private async startRealtimeSubscription(): Promise<void> {
-    if (!this.agentId) return;
+    if (!this.agentId) {
+      // Not registered yet — will be called again after register()
+      return;
+    }
+
+    // Already subscribed
+    if (this.realtimeChannel) return;
 
     try {
       // Dynamic import for ESM compatibility
@@ -492,6 +540,131 @@ export class OACPAgent {
       this.supabaseClient.removeChannel(this.realtimeChannel);
       this.realtimeChannel = null;
       console.log('[OACP] Realtime subscription stopped');
+    }
+  }
+
+  /**
+   * Register an action with a trust-validated handler.
+   *
+   * This is the preferred way to handle incoming tasks. The handler
+   * only runs if:
+   * 1. The sender is allowed by the trust policy
+   * 2. The message matches a declared action_spec
+   * 3. The payload validates against the action's inputSchema
+   *
+   * @param spec - The action specification
+   * @param handler - Async function receiving validated payload and full message.
+   *                  Return a result object to auto-send task_result back.
+   *
+   * @example
+   * agent.registerAction(
+   *   {
+   *     name: 'summarize-text',
+   *     description: 'Summarize a topic',
+   *     inputSchema: { type: 'object', properties: { task: { type: 'string' } }, required: ['task'] },
+   *   },
+   *   async (payload, msg) => {
+   *     const summary = await doResearch(payload.task);
+   *     return { summary, word_count: summary.split(' ').length };
+   *   },
+   * );
+   */
+  registerAction(
+    spec: ActionSpec,
+    handler: (payload: Record<string, unknown>, msg: MessageEnvelope) => Promise<Record<string, unknown> | void>,
+  ): void {
+    // Add to action specs if not already present
+    if (!this.actionSpecs.find((s) => s.name === spec.name)) {
+      this.actionSpecs.push(spec);
+    }
+    this.actionHandlers.set(spec.name, handler);
+
+    // Ensure we're listening for task_requests
+    if (!this.messageHandlers.has('__trust_pipeline')) {
+      this.messageHandlers.set('__trust_pipeline', []);
+      this.on('task_request', (msg) => {
+        this.handleTrustedTask(msg as MessageEnvelope).catch((err) => {
+          console.error('[OACP] Trust pipeline error:', err);
+        });
+      });
+    }
+
+    console.log(`[OACP] Registered action: ${spec.name} — "${spec.description}"`);
+  }
+
+  /**
+   * Process a task_request through the trust pipeline.
+   * @private
+   */
+  private async handleTrustedTask(msg: MessageEnvelope): Promise<void> {
+    const payload = (msg.payload || {}) as Record<string, unknown>;
+    const senderId = msg.sender_agent_id;
+
+    // Step 1: Check sender trust
+    const senderCheck = isSenderAllowed(senderId, this.trustPolicy);
+    if (!senderCheck.allowed) {
+      console.log(`[OACP] ⛔ Rejected task from ${senderId.substring(0, 8)}...: ${senderCheck.reason}`);
+      await this.send(senderId, 'task_error', {
+        error: 'unauthorized',
+        message: senderCheck.reason,
+      }, { correlationId: msg.correlation_id });
+      return;
+    }
+
+    // Step 2: Match action
+    const actionMatch = matchAction(payload, this.actionSpecs);
+    if (!actionMatch.matched) {
+      console.log(`[OACP] ⛔ No matching action: ${actionMatch.reason}`);
+      await this.send(senderId, 'task_error', {
+        error: 'unknown_action',
+        message: actionMatch.reason,
+        available_actions: this.actionSpecs.map((s) => ({
+          name: s.name,
+          description: s.description,
+        })),
+      }, { correlationId: msg.correlation_id });
+      return;
+    }
+
+    const action = actionMatch.matched;
+
+    // Step 3: Validate payload against inputSchema
+    const validation = validatePayload(payload, action.inputSchema);
+    if (!validation.valid) {
+      console.log(`[OACP] ⛔ Payload validation failed: ${validation.errors.join('; ')}`);
+      await this.send(senderId, 'task_error', {
+        error: 'invalid_payload',
+        message: `Payload does not match schema for action "${action.name}"`,
+        validation_errors: validation.errors,
+      }, { correlationId: msg.correlation_id });
+      return;
+    }
+
+    // Step 4: Execute handler
+    console.log(`[OACP] ✅ Trust check passed — executing action: ${action.name}`);
+    const handler = this.actionHandlers.get(action.name);
+    if (!handler) {
+      console.error(`[OACP] No handler registered for action: ${action.name}`);
+      return;
+    }
+
+    try {
+      const result = await handler(payload, msg);
+
+      // If handler returns a result, auto-send task_result
+      if (result && typeof result === 'object') {
+        await this.send(senderId, 'task_result', result, {
+          correlationId: msg.correlation_id,
+        });
+      }
+    } catch (err) {
+      const errorMsg = err instanceof Error ? err.message : 'Unknown error';
+      console.error(`[OACP] Action "${action.name}" failed:`, errorMsg);
+      await this.send(senderId, 'task_error', {
+        error: 'execution_error',
+        message: errorMsg,
+        action: action.name,
+      }, { correlationId: msg.correlation_id });
     }
   }
 

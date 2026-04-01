@@ -145,6 +145,7 @@ async function main() {
     target.agent_id,
     'task_request',
     {
+      action: 'summarize-text',  // Matches the research agent's action_spec
       task: RESEARCH_TASK,
       priority: 'normal',
       max_words: 300,

@@ -58,3 +58,15 @@ export type {
   MessageEnvelope,
   ApiError,
 } from './types.js';
+
+// Trust model
+export {
+  validatePayload,
+  isSenderAllowed,
+  matchAction,
+  DEFAULT_TRUST_POLICY,
+  type ActionSpec,
+  type TrustPolicy,
+  type SimpleSchema,
+  type ValidationResult,
+} from './trust.js';

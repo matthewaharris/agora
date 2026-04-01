@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "exported_at": "2026-03-31T21:27:43.662Z",
+  "exported_at": "2026-04-01T04:34:57.689Z",
   "milestones": [
     {
       "id": "M001",
@@ -181,6 +181,71 @@
       ],
       "requirement_coverage": "REQ-AGENT-04 (runnable agent), REQ-IOS-01 through REQ-IOS-05 (adapted to web dashboard), Demo Use Case Section 7 (full scenario)",
       "boundary_map_markdown": "```\nDemo Agents (new)\n├── research-agent: registers with 'research-summarization', processes tasks via LLM\n├── extraction-agent: registers with 'data-extraction', discovers research-agent, sends task\n└── Both use oacp-sdk from M001+M002\n\nWeb Dashboard (new, Vercel)\n├── Next.js/React app connecting to Supabase Realtime\n├── Registry view: agent cards with status indicators\n├── Messages view: chronological feed of message exchange\n└── Trigger demo task from UI\n\nExternal\n├── OpenAI/Anthropic API: LLM calls for research summarization\n└── Supabase Realtime: live updates to dashboard\n```"
+    },
+    {
+      "id": "M004",
+      "title": "",
+      "status": "queued",
+      "depends_on": [],
+      "created_at": "2026-04-01T04:08:01.726Z",
+      "completed_at": null,
+      "vision": "Make OACP safe for multi-party use: agents declare bounded capabilities, control who can invoke them, and validate all inputs. Then add real LLM-powered research and document how third-party developers build and register agents.",
+      "success_criteria": [
+        "Agents declare action_specs that define exactly what operations they perform",
+        "Agents can set allowed_senders to control who can send them tasks",
+        "Task payloads are validated against action_spec schemas before processing",
+        "Unrecognized or out-of-scope requests are rejected with clear error messages",
+        "Developer guide enables a new developer to build and register an agent in under 30 minutes",
+        "Research agent uses a real LLM API for dynamic summarization",
+        "All security features documented with threat model"
+      ],
+      "key_risks": [
+        {
+          "risk": "Action spec schema could be too rigid for flexible agent behavior",
+          "whyItMatters": "If specs are too strict, agents can't handle reasonable variations of valid requests"
+        },
+        {
+          "risk": "LLM integration adds API key management complexity",
+          "whyItMatters": "Each agent owner needs their own LLM API key — can't share one"
+        },
+        {
+          "risk": "Allowlist model doesn't scale for open discovery",
+          "whyItMatters": "If you must know agents in advance, the registry loses its value — need a path to open trust"
+        }
+      ],
+      "proof_strategy": [
+        {
+          "riskOrUnknown": "Action specs prevent out-of-scope execution",
+          "retireIn": "S01",
+          "whatWillBeProven": "Agent rejects a task that doesn't match its declared action_spec"
+        },
+        {
+          "riskOrUnknown": "Allowlist blocks unauthorized senders",
+          "retireIn": "S01",
+          "whatWillBeProven": "Agent rejects task_request from a sender not in allowed_senders"
+        },
+        {
+          "riskOrUnknown": "LLM integration works with trust guardrails",
+          "retireIn": "S03",
+          "whatWillBeProven": "Research agent calls LLM but only for summarization, rejects prompt injection attempts"
+        }
+      ],
+      "verification_contract": "Action specs validated against JSON Schema. Allowlists enforced before task processing. LLM calls sandboxed to declared operation.",
+      "verification_integration": "Malicious task payloads rejected. Unauthorized senders blocked. LLM summarization returns real results.",
+      "verification_operational": "All security decisions logged. Trust model documented in threat model doc.",
+      "verification_uat": "New developer follows guide to build and register a custom agent. Agent correctly rejects out-of-scope requests.",
+      "definition_of_done": [
+        "Action spec schema defined and enforced in SDK",
+        "Allowed senders list configurable per agent",
+        "Task payload validation against action_spec before handler runs",
+        "Developer guide with quickstart, SDK reference, and security best practices",
+        "SKILL.md for AI agents building OACP agents",
+        "Research agent uses OpenAI/Anthropic for real summarization",
+        "Threat model document covers known attack vectors and mitigations",
+        "All changes committed and pushed"
+      ],
+      "requirement_coverage": "New security requirements surfaced by production readiness concerns. REQ-AGENT-01 enhanced with action specs. Developer experience requirements new.",
+      "boundary_map_markdown": "```\\noacp-sdk (extends M002)\\n├── ActionSpec: declares what an agent does (name, description, input schema)\\n├── AllowedSenders: list of agent_ids or 'open' for public\\n├── TaskValidator: validates incoming payloads against action_spec\\n└── Enhanced on() with pre-validation pipeline\\n\\nAgent Card (extends M001 schema)\\n├── action_specs: array of declared operations\\n├── trust_policy: { allowed_senders, require_signature }\\n└── Persisted in agents table (metadata or new columns)\\n\\nDocs (new)\\n├── docs/getting-started.md\\n├── docs/security.md (threat model)\\n├── docs/SKILL.md (for AI agents)\\n└── docs/api-reference.md\\n\\nLLM Integration (new)\\n├── research-agent uses OpenAI/Anthropic\\n├── Input sanitization before LLM call\\n└── Output bounded to declared action_spec\\n```"
     }
   ],
   "slices": [
@@ -352,6 +417,70 @@
       "proof_level": "manual (fresh clone test)",
       "integration_closure": "Complete deliverable ready for sharing/presentation",
       "observability_impact": "README serves as primary documentation",
+      "sequence": 0,
+      "replan_triggered_at": null
+    },
+    {
+      "milestone_id": "M004",
+      "id": "S01",
+      "title": "Agent Trust Model — Action Specs & Sender Allowlists",
+      "status": "pending",
+      "risk": "medium",
+      "depends": [],
+      "demo": "Agent rejects out-of-scope task and unauthorized sender; accepts valid task from allowed sender",
+      "created_at": "2026-04-01T04:08:43.415Z",
+      "completed_at": null,
+      "full_summary_md": "",
+      "full_uat_md": "",
+      "goal": "Add action_spec declarations, allowed_senders configuration, and pre-processing validation to the SDK so agents have bounded, auditable behavior",
+      "success_criteria": "Agent with action_spec rejects tasks outside its scope; allowed_senders blocks unauthorized agents; validation logged",
+      "proof_level": "automated (unit tests + integration test)",
+      "integration_closure": "Provides trust primitives that S02 docs will reference and S03 LLM integration will use",
+      "observability_impact": "Rejected tasks logged with reason; trust decisions observable",
+      "sequence": 0,
+      "replan_triggered_at": null
+    },
+    {
+      "milestone_id": "M004",
+      "id": "S02",
+      "title": "Developer Onboarding — Guide, SKILL.md & API Reference",
+      "status": "pending",
+      "risk": "low",
+      "depends": [
+        "S01"
+      ],
+      "demo": "A new developer reads the guide and builds a custom agent that registers and handles tasks",
+      "created_at": "2026-04-01T04:08:43.415Z",
+      "completed_at": null,
+      "full_summary_md": "",
+      "full_uat_md": "",
+      "goal": "Create comprehensive developer documentation including getting-started guide, security best practices, SKILL.md for AI-assisted development, and API reference",
+      "success_criteria": "Guide covers setup to deployed agent in under 30 minutes; SKILL.md enables AI agents to build OACP agents; threat model covers known vectors",
+      "proof_level": "manual (walkthrough test)",
+      "integration_closure": "Documentation enables third-party adoption",
+      "observability_impact": "None (docs only)",
+      "sequence": 0,
+      "replan_triggered_at": null
+    },
+    {
+      "milestone_id": "M004",
+      "id": "S03",
+      "title": "LLM-Powered Research Agent",
+      "status": "pending",
+      "risk": "medium",
+      "depends": [
+        "S01"
+      ],
+      "demo": "Research agent receives any topic, calls LLM, returns real summary — rejects prompt injection",
+      "created_at": "2026-04-01T04:08:43.415Z",
+      "completed_at": null,
+      "full_summary_md": "",
+      "full_uat_md": "",
+      "goal": "Integrate OpenAI or Anthropic API into the research agent with input sanitization and action_spec enforcement",
+      "success_criteria": "Agent summarizes arbitrary topics via LLM; rejects prompt injection; respects action_spec boundaries; API key configurable per agent",
+      "proof_level": "automated (integration test with real LLM call)",
+      "integration_closure": "Proves OACP agents can safely use LLMs within trust boundaries",
+      "observability_impact": "LLM call duration and token usage logged",
       "sequence": 0,
       "replan_triggered_at": null
     }
@@ -1272,6 +1401,123 @@
       "observability_impact": "",
       "full_plan_md": "",
       "sequence": 0
+    },
+    {
+      "milestone_id": "M004",
+      "slice_id": "S01",
+      "id": "T01",
+      "title": "Defined ActionSpec, TrustPolicy types with payload validator and sender allowlist checker",
+      "status": "complete",
+      "one_liner": "Defined ActionSpec, TrustPolicy types with payload validator and sender allowlist checker",
+      "narrative": "Defined the trust model primitives: ActionSpec (name, description, inputSchema for bounded capability declaration), TrustPolicy (allowedSenders list), and SimpleSchema (lightweight JSON Schema subset for payload validation). Built validatePayload(), isSenderAllowed(), and matchAction() functions. Extended AgentConfig to accept actionSpecs and trustPolicy. All types exported from index.ts. Compiles clean.",
+      "verification_result": "tsc --noEmit passes with 0 errors. All types exported.",
+      "duration": "",
+      "completed_at": "2026-04-01T04:10:28.322Z",
+      "blocker_discovered": false,
+      "deviations": "None.",
+      "known_issues": "None.",
+      "key_files": [
+        "packages/oacp-sdk/src/trust.ts",
+        "packages/oacp-sdk/src/config.ts",
+        "packages/oacp-sdk/src/index.ts"
+      ],
+      "key_decisions": [
+        "ActionSpec uses name+description+inputSchema pattern (like a typed function signature)",
+        "TrustPolicy supports 'open', 'none', or explicit agent_id allowlist",
+        "Lightweight SimpleSchema validator instead of full JSON Schema dependency",
+        "matchAction() supports explicit action field or single-action default"
+      ],
+      "full_summary_md": "---\nid: T01\nparent: S01\nmilestone: M004\nkey_files:\n  - packages/oacp-sdk/src/trust.ts\n  - packages/oacp-sdk/src/config.ts\n  - packages/oacp-sdk/src/index.ts\nkey_decisions:\n  - ActionSpec uses name+description+inputSchema pattern (like a typed function signature)\n  - TrustPolicy supports 'open', 'none', or explicit agent_id allowlist\n  - Lightweight SimpleSchema validator instead of full JSON Schema dependency\n  - matchAction() supports explicit action field or single-action default\nduration: \"\"\nverification_result: passed\ncompleted_at: 2026-04-01T04:10:28.323Z\nblocker_discovered: false\n---\n\n# T01: Defined ActionSpec, TrustPolicy types with payload validator and sender allowlist checker\n\n**Defined ActionSpec, TrustPolicy types with payload validator and sender allowlist checker**\n\n## What Happened\n\nDefined the trust model primitives: ActionSpec (name, description, inputSchema for bounded capability declaration), TrustPolicy (allowedSenders list), and SimpleSchema (lightweight JSON Schema subset for payload validation). Built validatePayload(), isSenderAllowed(), and matchAction() functions. Extended AgentConfig to accept actionSpecs and trustPolicy. All types exported from index.ts. Compiles clean.\n\n## Verification\n\ntsc --noEmit passes with 0 errors. All types exported.\n\n## Verification Evidence\n\n| # | Command | Exit Code | Verdict | Duration |\n|---|---------|-----------|---------|----------|\n| 1 | `npx tsc --noEmit` | 0 | pass | 4000ms |\n\n\n## Deviations\n\nNone.\n\n## Known Issues\n\nNone.\n\n## Files Created/Modified\n\n- `packages/oacp-sdk/src/trust.ts`\n- `packages/oacp-sdk/src/config.ts`\n- `packages/oacp-sdk/src/index.ts`\n",
+      "description": "1. Define ActionSpec interface in SDK types:\n   - name: string (e.g., 'summarize-text')\n   - description: string\n   - inputSchema: JSON Schema object for payload validation\n   - outputSchema: optional JSON Schema for response\n2. Define TrustPolicy interface:\n   - allowedSenders: string[] (agent_ids) | 'open' (anyone) | 'none' (reject all)\n   - requireSignature: boolean (default true)\n3. Extend AgentConfig to accept actionSpecs and trustPolicy\n4. Add simple JSON Schema validator (lightweight, no dependency)\n5. Export new types from index.ts",
+      "estimate": "20min",
+      "files": [
+        "packages/oacp-sdk/src/types.ts",
+        "packages/oacp-sdk/src/trust.ts",
+        "packages/oacp-sdk/src/config.ts",
+        "packages/oacp-sdk/src/index.ts"
+      ],
+      "verify": "tsc --noEmit passes; types exported",
+      "inputs": [],
+      "expected_output": [
+        "packages/oacp-sdk/src/types.ts (updated)",
+        "packages/oacp-sdk/src/trust.ts"
+      ],
+      "observability_impact": "",
+      "full_plan_md": "",
+      "sequence": 0
+    },
+    {
+      "milestone_id": "M004",
+      "slice_id": "S01",
+      "id": "T02",
+      "title": "Integrated trust pipeline into OACPAgent: registerAction() with sender check, action matching, payload validation",
+      "status": "complete",
+      "one_liner": "Integrated trust pipeline into OACPAgent: registerAction() with sender check, action matching, payload validation",
+      "narrative": "Integrated the trust model into OACPAgent. registerAction() accepts an ActionSpec and handler, sets up a trust pipeline on task_request messages. The pipeline runs: 1) sender allowlist check, 2) action matching (by payload.action field or single-action default), 3) payload schema validation, 4) handler execution with auto task_result sending. Each rejection sends a typed task_error back. Action specs are included in Agent Card metadata during registration so discovering agents can see what actions are available.",
+      "verification_result": "tsc --noEmit and tsc build both pass with 0 errors.",
+      "duration": "",
+      "completed_at": "2026-04-01T04:34:57.646Z",
+      "blocker_discovered": false,
+      "deviations": "None.",
+      "known_issues": "None.",
+      "key_files": [
+        "packages/oacp-sdk/src/agent.ts"
+      ],
+      "key_decisions": [
+        "registerAction() auto-sends task_result if handler returns an object",
+        "Trust pipeline: sender check → action match → payload validation → execute",
+        "Action specs included in Agent Card metadata on registration",
+        "Rejected tasks get typed task_error with specific error codes (unauthorized, unknown_action, invalid_payload, execution_error)"
+      ],
+      "full_summary_md": "---\nid: T02\nparent: S01\nmilestone: M004\nkey_files:\n  - packages/oacp-sdk/src/agent.ts\nkey_decisions:\n  - registerAction() auto-sends task_result if handler returns an object\n  - Trust pipeline: sender check → action match → payload validation → execute\n  - Action specs included in Agent Card metadata on registration\n  - Rejected tasks get typed task_error with specific error codes (unauthorized, unknown_action, invalid_payload, execution_error)\nduration: \"\"\nverification_result: passed\ncompleted_at: 2026-04-01T04:34:57.647Z\nblocker_discovered: false\n---\n\n# T02: Integrated trust pipeline into OACPAgent: registerAction() with sender check, action matching, payload validation\n\n**Integrated trust pipeline into OACPAgent: registerAction() with sender check, action matching, payload validation**\n\n## What Happened\n\nIntegrated the trust model into OACPAgent. registerAction() accepts an ActionSpec and handler, sets up a trust pipeline on task_request messages. The pipeline runs: 1) sender allowlist check, 2) action matching (by payload.action field or single-action default), 3) payload schema validation, 4) handler execution with auto task_result sending. Each rejection sends a typed task_error back. Action specs are included in Agent Card metadata during registration so discovering agents can see what actions are available.\n\n## Verification\n\ntsc --noEmit and tsc build both pass with 0 errors.\n\n## Verification Evidence\n\n| # | Command | Exit Code | Verdict | Duration |\n|---|---------|-----------|---------|----------|\n| 1 | `npx tsc --noEmit` | 0 | pass | 4000ms |\n| 2 | `npx tsc` | 0 | pass | 4000ms |\n\n\n## Deviations\n\nNone.\n\n## Known Issues\n\nNone.\n\n## Files Created/Modified\n\n- `packages/oacp-sdk/src/agent.ts`\n",
+      "description": "1. Modify OACPAgent.on() to run a validation pipeline before dispatching:\n   a. Check sender against allowedSenders\n   b. Match message payload against action_spec inputSchema\n   c. If validation fails, auto-send task_error back with reason\n   d. If validation passes, invoke handler\n2. Add registerAction(spec, handler) method as alternative to raw on()\n   - Binds an action_spec to a handler\n   - Multiple actions per agent\n3. Log all trust decisions (accepted/rejected with reason)\n4. Include action_specs in Agent Card metadata on registration",
+      "estimate": "25min",
+      "files": [
+        "packages/oacp-sdk/src/agent.ts"
+      ],
+      "verify": "tsc --noEmit; agent.ts has registerAction, validation pipeline, trust logging",
+      "inputs": [
+        "packages/oacp-sdk/src/trust.ts"
+      ],
+      "expected_output": [
+        "packages/oacp-sdk/src/agent.ts (updated)"
+      ],
+      "observability_impact": "",
+      "full_plan_md": "",
+      "sequence": 0
+    },
+    {
+      "milestone_id": "M004",
+      "slice_id": "S01",
+      "id": "T03",
+      "title": "Update reference agents with action specs and verify end-to-end",
+      "status": "pending",
+      "one_liner": "",
+      "narrative": "",
+      "verification_result": "",
+      "duration": "",
+      "completed_at": null,
+      "blocker_discovered": false,
+      "deviations": "",
+      "known_issues": "",
+      "key_files": [],
+      "key_decisions": [],
+      "full_summary_md": "",
+      "description": "1. Update research-agent to use registerAction() with action_spec\n2. Update extraction-agent to handle task_error from rejected requests\n3. Build SDK, run both agents, verify:\n   - Valid task is accepted and processed\n   - Task with wrong action name is rejected\n4. Commit and push",
+      "estimate": "20min",
+      "files": [
+        "agents/research-agent/index.ts",
+        "agents/extraction-agent/index.ts"
+      ],
+      "verify": "Both agents run; valid task completes; SDK builds clean; git push succeeds",
+      "inputs": [],
+      "expected_output": [
+        "agents/research-agent/index.ts (updated)",
+        "agents/extraction-agent/index.ts (updated)"
+      ],
+      "observability_impact": "",
+      "full_plan_md": "",
+      "sequence": 0
     }
   ],
   "decisions": [
@@ -1321,6 +1567,18 @@
       "rationale": "A2A is now the dominant agent-to-agent standard (150+ orgs, Linux Foundation governance). Aligning schema structure makes future interop easier. OACP adds registry/relay primitives that A2A lacks, so compatibility is complementary not redundant.",
       "revisable": "Yes",
       "made_by": "agent",
+      "superseded_by": null
+    },
+    {
+      "seq": 5,
+      "id": "D005",
+      "when_context": "",
+      "scope": "architecture",
+      "decision": "Agent trust and security model",
+      "choice": "Capability-scoped execution boundaries + sender allowlists + reputation system (future)",
+      "rationale": "Whitelisting alone is insufficient — agents need to declare what actions they WILL perform and reject everything else. This is more robust than trying to block bad inputs (allowlist > denylist). Combined with sender allowlists for who can invoke them. Long-term: reputation scoring based on successful task completion, uptime, and peer ratings. Payment layer (UCP/ACP alignment) deferred to future milestone.",
+      "revisable": "Yes",
+      "made_by": "collaborative",
       "superseded_by": null
     }
   ],
@@ -1599,6 +1857,39 @@
       "verdict": "pass",
       "duration_ms": 500,
       "created_at": "2026-03-31T21:26:50.660Z"
+    },
+    {
+      "id": 26,
+      "task_id": "T01",
+      "slice_id": "S01",
+      "milestone_id": "M004",
+      "command": "npx tsc --noEmit",
+      "exit_code": 0,
+      "verdict": "pass",
+      "duration_ms": 4000,
+      "created_at": "2026-04-01T04:10:28.322Z"
+    },
+    {
+      "id": 27,
+      "task_id": "T02",
+      "slice_id": "S01",
+      "milestone_id": "M004",
+      "command": "npx tsc --noEmit",
+      "exit_code": 0,
+      "verdict": "pass",
+      "duration_ms": 4000,
+      "created_at": "2026-04-01T04:34:57.646Z"
+    },
+    {
+      "id": 28,
+      "task_id": "T02",
+      "slice_id": "S01",
+      "milestone_id": "M004",
+      "command": "npx tsc",
+      "exit_code": 0,
+      "verdict": "pass",
+      "duration_ms": 4000,
+      "created_at": "2026-04-01T04:34:57.646Z"
     }
   ]
 }
