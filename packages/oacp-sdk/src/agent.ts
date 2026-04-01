@@ -20,6 +20,8 @@ import {
   AgentConfig,
   DEFAULT_HEARTBEAT_INTERVAL_MS,
   DEFAULT_KEYPAIR_PATH,
+  OACP_PUBLIC_REGISTRY_URL,
+  OACP_PUBLIC_REGISTRY_KEY,
 } from './config.js';
 import {
   generateKeypair,
@@ -81,9 +83,17 @@ export class OACPAgent {
     this.keypair = loadOrCreateKeypair(keypairPath);
 
     // Set API base URL
+    const supabaseUrl = config.supabaseUrl || OACP_PUBLIC_REGISTRY_URL;
     this.apiBaseUrl =
       config.apiBaseUrl ||
-      `${config.supabaseUrl}/functions/v1/oacp`;
+      `${supabaseUrl}/functions/v1/oacp`;
+
+    // Store resolved config for Realtime client
+    this.config = {
+      ...config,
+      supabaseUrl: supabaseUrl,
+      supabaseAnonKey: config.supabaseAnonKey || OACP_PUBLIC_REGISTRY_KEY,
+    };
 
     // Trust model
     this.actionSpecs = config.actionSpecs || [];
@@ -593,8 +603,8 @@ export class OACPAgent {
 
       if (!this.supabaseClient) {
         this.supabaseClient = createClient(
-          this.config.supabaseUrl,
-          this.config.supabaseAnonKey,
+          this.config.supabaseUrl || OACP_PUBLIC_REGISTRY_URL,
+          this.config.supabaseAnonKey || OACP_PUBLIC_REGISTRY_KEY,
         );
       }
 

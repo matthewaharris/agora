@@ -29,7 +29,13 @@ export const VERSION = '0.1.0';
 export { OACPAgent } from './agent.js';
 
 // Configuration
-export { type AgentConfig, DEFAULT_HEARTBEAT_INTERVAL_MS, DEFAULT_KEYPAIR_PATH } from './config.js';
+export {
+  type AgentConfig,
+  DEFAULT_HEARTBEAT_INTERVAL_MS,
+  DEFAULT_KEYPAIR_PATH,
+  OACP_PUBLIC_REGISTRY_URL,
+  OACP_PUBLIC_REGISTRY_KEY,
+} from './config.js';
 
 // Cryptography
 export {
