@@ -19,6 +19,7 @@
 import 'dotenv/config';
 import { OACPAgent } from 'oacp-sdk';
 import type { ActionSpec, MessageEnvelope } from 'oacp-sdk';
+import { summarizeWithLLM, isLLMAvailable } from './llm.js';
 
 // ============================================================
 // Configuration
@@ -123,9 +124,13 @@ const agent = new OACPAgent({
   heartbeatIntervalMs: 30_000,
   actionSpecs: [summarizeAction],
   trustPolicy: {
-    allowedSenders: 'open', // Accept tasks from any registered agent
+    allowedSenders: 'open',
     requireSignature: true,
   },
+  model: isLLMAvailable()
+    ? { provider: 'openai', name: process.env.OPENAI_MODEL || 'gpt-4o-mini', modalities: ['text'] }
+    : { provider: 'local', name: 'built-in', modalities: ['text'] },
+  languages: ['en'],
 });
 
 // ============================================================
@@ -134,22 +139,36 @@ const agent = new OACPAgent({
 
 agent.registerAction(summarizeAction, async (payload) => {
   const task = payload.task as string;
+  const maxWords = (payload.max_words as number) || 300;
 
   console.log(`\n📨 Processing: "${task}"`);
 
-  // Simulate processing delay
-  await new Promise((r) => setTimeout(r, 2000 + Math.random() * 1000));
+  if (isLLMAvailable()) {
+    // Use real LLM
+    console.log('🤖 Using LLM for summarization...');
+    try {
+      const result = await summarizeWithLLM(task, maxWords);
+      console.log(`✅ LLM summary generated (${result.word_count} words, ${result.duration_ms}ms)`);
+      return result;
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : 'LLM error';
+      console.warn(`⚠️ LLM failed: ${msg} — falling back to built-in`);
+      // Fall through to built-in
+    }
+  } else {
+    console.log('📝 Using built-in summaries (set OPENAI_API_KEY for LLM)');
+  }
 
+  // Built-in fallback
+  await new Promise((r) => setTimeout(r, 2000 + Math.random() * 1000));
   const summary = generateSummary(task);
   const wordCount = summary.split(/\s+/).length;
+  console.log(`✅ Built-in summary generated (${wordCount} words)`);
 
-  console.log(`✅ Summary generated (${wordCount} words)`);
-
-  // Returning an object auto-sends task_result
   return {
     summary,
     word_count: wordCount,
-    source: 'oacp-research-agent/v0.1.0',
+    source: 'oacp-research-agent/built-in',
   };
 });
 
@@ -168,7 +187,12 @@ async function main() {
 
   console.log('\n⏳ Waiting for task requests... (Ctrl+C to stop)\n');
   console.log('   This agent only accepts "summarize-text" actions.');
-  console.log('   Other requests will be rejected with a clear error.\n');
+  if (isLLMAvailable()) {
+    console.log(`   🤖 LLM mode: ${process.env.OPENAI_MODEL || 'gpt-4o-mini'}`);
+  } else {
+    console.log('   📝 Built-in mode (set OPENAI_API_KEY for LLM)');
+  }
+  console.log('');
 
   const shutdown = async () => {
     console.log('\n🛑 Shutting down...');

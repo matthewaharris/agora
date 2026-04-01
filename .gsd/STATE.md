@@ -1,7 +1,7 @@
 # GSD State
 
 **Active Milestone:** M004: M004
-**Active Slice:** S02: Developer Onboarding — Guide, SKILL.md & API Reference
+**Active Slice:** S03: LLM-Powered Research Agent
 **Phase:** evaluating-gates
 **Requirements Status:** 0 active · 0 validated · 0 deferred · 0 out of scope
 
@@ -18,4 +18,4 @@
 - None
 
 ## Next Action
-Evaluate 3 quality gate(s) for S02 before execution.
+Evaluate 3 quality gate(s) for S03 before execution.

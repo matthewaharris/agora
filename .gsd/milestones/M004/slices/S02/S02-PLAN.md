@@ -4,7 +4,7 @@
 **Demo:** After this: A new developer reads the guide and builds a custom agent that registers and handles tasks
 
 ## Tasks
-- [ ] **T01: Write developer documentation suite** — 1. Create docs/getting-started.md — step-by-step guide from zero to running agent:
+- [x] **T01: Wrote 4 docs: getting-started tutorial, security threat model, SKILL.md for AI agents, API reference** — 1. Create docs/getting-started.md — step-by-step guide from zero to running agent:
    - Prerequisites, Supabase setup, SDK install
    - Build your first agent (10 min tutorial)
    - Register, handle tasks, send results
