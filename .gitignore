@@ -33,3 +33,4 @@ Thumbs.db
 .gsd/runtime/
 .gsd/worktrees/
 .gsd/activity/
+.npmrc
