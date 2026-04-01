@@ -151,6 +151,13 @@ const msgId = await agentB.send(agentAId, 'task_request', {
 
 See `examples/two-agents.ts` for a full two-agent demo.
 
+## Documentation
+
+- **[Getting Started](docs/getting-started.md)** — build your first OACP agent in 10 minutes
+- **[API Reference](docs/api-reference.md)** — all endpoints and SDK methods
+- **[Security Guide](docs/security.md)** — threat model, trust policies, and best practices
+- **[SKILL.md](docs/SKILL.md)** — instructions for AI agents building OACP agents
+
 ## Dashboard
 
 A real-time observer dashboard shows the live state of the OACP system.

@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "exported_at": "2026-04-01T04:50:52.440Z",
+  "exported_at": "2026-04-01T05:04:17.469Z",
   "milestones": [
     {
       "id": "M001",
@@ -454,9 +454,9 @@
       "completed_at": null,
       "full_summary_md": "",
       "full_uat_md": "",
-      "goal": "Create comprehensive developer documentation including getting-started guide, security best practices, SKILL.md for AI-assisted development, and API reference",
-      "success_criteria": "Guide covers setup to deployed agent in under 30 minutes; SKILL.md enables AI agents to build OACP agents; threat model covers known vectors",
-      "proof_level": "manual (walkthrough test)",
+      "goal": "Create comprehensive developer documentation: getting-started guide, SKILL.md for AI agents, security docs, and API reference",
+      "success_criteria": "Guide covers setup to deployed agent; SKILL.md enables AI agents to build OACP agents; threat model covers known vectors",
+      "proof_level": "manual (walkthrough)",
       "integration_closure": "Documentation enables third-party adoption",
       "observability_impact": "None (docs only)",
       "sequence": 0,
@@ -1526,6 +1526,44 @@
       "observability_impact": "",
       "full_plan_md": "",
       "sequence": 0
+    },
+    {
+      "milestone_id": "M004",
+      "slice_id": "S02",
+      "id": "T01",
+      "title": "Write developer documentation suite",
+      "status": "pending",
+      "one_liner": "",
+      "narrative": "",
+      "verification_result": "",
+      "duration": "",
+      "completed_at": null,
+      "blocker_discovered": false,
+      "deviations": "",
+      "known_issues": "",
+      "key_files": [],
+      "key_decisions": [],
+      "full_summary_md": "",
+      "description": "1. Create docs/getting-started.md — step-by-step guide from zero to running agent:\n   - Prerequisites, Supabase setup, SDK install\n   - Build your first agent (10 min tutorial)\n   - Register, handle tasks, send results\n   - Trust model setup\n   - Deploying your agent\n2. Create docs/security.md — threat model:\n   - Attack vectors and mitigations\n   - Action spec boundaries\n   - Trust policies\n   - Ed25519 identity model\n3. Create docs/SKILL.md — instructions for AI coding agents building OACP agents\n4. Create docs/api-reference.md — all endpoints and SDK methods\n5. Update README to link to docs\n6. Commit and push",
+      "estimate": "30min",
+      "files": [
+        "docs/getting-started.md",
+        "docs/security.md",
+        "docs/SKILL.md",
+        "docs/api-reference.md",
+        "README.md"
+      ],
+      "verify": "All 4 docs exist with comprehensive content; README links to them",
+      "inputs": [],
+      "expected_output": [
+        "docs/getting-started.md",
+        "docs/security.md",
+        "docs/SKILL.md",
+        "docs/api-reference.md"
+      ],
+      "observability_impact": "",
+      "full_plan_md": "",
+      "sequence": 0
     }
   ],
   "decisions": [
@@ -1585,6 +1623,18 @@
       "decision": "Agent trust and security model",
       "choice": "Capability-scoped execution boundaries + sender allowlists + reputation system (future)",
       "rationale": "Whitelisting alone is insufficient — agents need to declare what actions they WILL perform and reject everything else. This is more robust than trying to block bad inputs (allowlist > denylist). Combined with sender allowlists for who can invoke them. Long-term: reputation scoring based on successful task completion, uptime, and peer ratings. Payment layer (UCP/ACP alignment) deferred to future milestone.",
+      "revisable": "Yes",
+      "made_by": "collaborative",
+      "superseded_by": null
+    },
+    {
+      "seq": 6,
+      "id": "D006",
+      "when_context": "",
+      "scope": "architecture",
+      "decision": "Multi-model agent support enhancements",
+      "choice": "Add content_type to payloads, model metadata to Agent Card, and binary payload support via URL references",
+      "rationale": "OACP should support agents running any model type (LLM, image gen, GIS, speech-to-text, translation). Adding content_type lets agents know what they're receiving, model metadata enables model-specific discovery, and URL references handle large binary payloads without bloating the message bus.",
       "revisable": "Yes",
       "made_by": "collaborative",
       "superseded_by": null
