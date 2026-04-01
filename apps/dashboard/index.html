@@ -334,7 +334,7 @@
     <h1>◉ OACP Observer</h1>
     <div class="header-right">
       <span id="connStatus" class="status connecting">● Connecting...</span>
-      <button class="gear-btn" onclick="toggleSettings()" title="Settings">⚙</button>
+      <button class="gear-btn" onclick="toggleSettings()" title="Settings">&#9881;</button>
     </div>
   </header>
 
@@ -455,24 +455,30 @@
     async function connect() {
       const config = getConfig();
       setConnected('connecting');
+      console.log('[OACP Dashboard] Connecting to:', config.url);
 
       try {
         // Clean up existing connection
         if (channel && supabaseClient) {
-          supabaseClient.removeChannel(channel);
+          try { supabaseClient.removeChannel(channel); } catch (e) { /* ignore */ }
           channel = null;
         }
 
         supabaseClient = window.supabase.createClient(config.url, config.key);
 
+        // Test connection by loading agents
         await loadAgents();
         await loadMessages();
         subscribeToChanges();
 
-        setConnected('connected');
+        // Don't set connected here — let the subscription callback handle it
+        console.log('[OACP Dashboard] Data loaded, subscribing to Realtime...');
       } catch (err) {
-        console.error('Connection failed:', err);
+        console.error('[OACP Dashboard] Connection failed:', err);
         setConnected('disconnected');
+        // Show error in the agent panel
+        document.getElementById('agentList').innerHTML =
+          `<div class="empty"><div class="icon">⚠️</div>Connection failed: ${err.message || err}<br>Click &#9881; to check settings</div>`;
       }
     }
 
@@ -581,8 +587,19 @@
           renderAgents(); // Re-render to update balance display
         })
         .subscribe((status) => {
-          setConnected(status === 'SUBSCRIBED' ? 'connected' : 'connecting');
+          console.log('[OACP Dashboard] Realtime status:', status);
+          if (status === 'SUBSCRIBED') {
+            setConnected('connected');
+          } else if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT') {
+            setConnected('disconnected');
+          }
         });
+
+      // Fallback: if data loaded successfully, show as connected after 3s
+      // even if Realtime subscription is slow
+      setTimeout(() => {
+        if (agents.size > 0) setConnected('connected');
+      }, 3000);
     }
 
     // ============================================================
