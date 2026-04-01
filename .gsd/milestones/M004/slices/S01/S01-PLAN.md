@@ -31,7 +31,7 @@
   - Estimate: 25min
   - Files: packages/oacp-sdk/src/agent.ts
   - Verify: tsc --noEmit; agent.ts has registerAction, validation pipeline, trust logging
-- [ ] **T03: Update reference agents with action specs and verify end-to-end** — 1. Update research-agent to use registerAction() with action_spec
+- [x] **T03: Updated agents with action specs, fixed Realtime timing, verified trust pipeline end-to-end** — 1. Update research-agent to use registerAction() with action_spec
 2. Update extraction-agent to handle task_error from rejected requests
 3. Build SDK, run both agents, verify:
    - Valid task is accepted and processed

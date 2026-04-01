@@ -46,6 +46,8 @@ export {
 // Types
 export type {
   AgentCard,
+  AgentMetadata,
+  ModelInfo,
   AgentStatus,
   RegisterRequest,
   RegisterResponse,
@@ -56,6 +58,8 @@ export type {
   DiscoverResponse,
   MessageType,
   MessageEnvelope,
+  PayloadContentType,
+  ContentPayload,
   ApiError,
 } from './types.js';
 

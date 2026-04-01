@@ -3,6 +3,7 @@
  */
 
 import type { ActionSpec, TrustPolicy } from './trust.js';
+import type { ModelInfo } from './types.js';
 
 export interface AgentConfig {
   /** Display name for the agent */
@@ -43,6 +44,12 @@ export interface AgentConfig {
 
   /** Trust policy controlling who can send tasks to this agent */
   trustPolicy?: TrustPolicy;
+
+  /** Model powering this agent (published in Agent Card for discovery) */
+  model?: ModelInfo;
+
+  /** Languages this agent can process (ISO 639-1 codes) */
+  languages?: string[];
 
   /**
    * Base URL for OACP API (default: {supabaseUrl}/functions/v1/oacp)

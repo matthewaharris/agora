@@ -21,10 +21,40 @@ export interface AgentCard {
   status: AgentStatus;
   public_key: string;
   protocols_supported: string[];
-  metadata: Record<string, unknown>;
+  metadata: AgentMetadata & Record<string, unknown>;
   last_seen_at: string | null;
   created_at: string;
   updated_at: string;
+}
+
+/**
+ * Structured metadata for Agent Cards.
+ * All fields optional — agents include what's relevant to them.
+ */
+export interface AgentMetadata {
+  /** Action specs declaring what this agent can do */
+  action_specs?: Array<{ name: string; description: string }>;
+
+  /** Model information — what powers this agent */
+  model?: ModelInfo;
+
+  /** Languages this agent can process (ISO 639-1 codes, e.g., ['en', 'es', 'ja']) */
+  languages?: string[];
+}
+
+/**
+ * Describes the model powering an agent.
+ * Enables model-specific discovery (e.g., "find me a GPT-4o agent").
+ */
+export interface ModelInfo {
+  /** Model provider (e.g., 'openai', 'anthropic', 'google', 'stability', 'local') */
+  provider?: string;
+
+  /** Model name (e.g., 'gpt-4o', 'claude-sonnet-4-20250514', 'stable-diffusion-xl') */
+  name?: string;
+
+  /** Model modalities — what input/output types it supports */
+  modalities?: Array<'text' | 'image' | 'audio' | 'video' | 'code' | 'geospatial'>;
 }
 
 // ============================================================
@@ -107,6 +137,57 @@ export interface MessageEnvelope {
   timestamp: string;
   correlation_id?: string;
   sequence?: number;
+}
+
+/**
+ * Content type hints for message payloads.
+ * Include as payload.content_type to tell the recipient what kind of data you're sending.
+ */
+export type PayloadContentType =
+  | 'text/plain'
+  | 'text/markdown'
+  | 'application/json'
+  | 'image/url'       // payload.url points to an image
+  | 'audio/url'       // payload.url points to audio
+  | 'video/url'       // payload.url points to video
+  | 'application/geo+json'  // GeoJSON payload
+  | 'application/base64'    // Base64-encoded binary in payload.data
+  | string;           // Custom content types allowed
+
+/**
+ * Payload conventions for binary/large content.
+ *
+ * Rather than embedding large binary data in the JSON message envelope,
+ * agents should use URL references:
+ *
+ * @example
+ * // Image generation result
+ * {
+ *   content_type: 'image/url',
+ *   url: 'https://storage.example.com/generated/abc123.png',
+ *   alt_text: 'A sunset over mountains',
+ *   width: 1024,
+ *   height: 1024,
+ * }
+ *
+ * // Audio transcription request
+ * {
+ *   content_type: 'audio/url',
+ *   url: 'https://storage.example.com/audio/recording.mp3',
+ *   language: 'en',
+ *   action: 'transcribe',
+ * }
+ *
+ * // GeoJSON analysis request
+ * {
+ *   content_type: 'application/geo+json',
+ *   action: 'analyze-region',
+ *   geojson: { type: 'Feature', geometry: { ... } },
+ * }
+ */
+export interface ContentPayload extends Record<string, unknown> {
+  content_type?: PayloadContentType;
+  url?: string;
 }
 
 // ============================================================

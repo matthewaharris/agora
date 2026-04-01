@@ -1,8 +1,8 @@
 # GSD State
 
 **Active Milestone:** M004: M004
-**Active Slice:** S01: Agent Trust Model — Action Specs & Sender Allowlists
-**Phase:** evaluating-gates
+**Active Slice:** S02: Developer Onboarding — Guide, SKILL.md & API Reference
+**Phase:** planning
 **Requirements Status:** 0 active · 0 validated · 0 deferred · 0 out of scope
 
 ## Milestone Registry
@@ -18,4 +18,4 @@
 - None
 
 ## Next Action
-Evaluate 3 quality gate(s) for S01 before execution.
+Slice S02 has a plan file but no tasks. Add tasks to the plan.

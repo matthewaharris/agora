@@ -148,15 +148,28 @@ export class OACPAgent {
     if (this.config.protocolsSupported) body.protocols_supported = this.config.protocolsSupported;
     if (this.config.metadata) body.metadata = this.config.metadata;
 
-    // Include action specs in metadata so other agents can see what we do
+    // Include structured metadata so other agents can discover our capabilities
+    const structuredMeta: Record<string, unknown> = {
+      ...(body.metadata as Record<string, unknown> || {}),
+    };
+
     if (this.actionSpecs.length > 0) {
-      body.metadata = {
-        ...(body.metadata as Record<string, unknown> || {}),
-        action_specs: this.actionSpecs.map((s) => ({
-          name: s.name,
-          description: s.description,
-        })),
-      };
+      structuredMeta.action_specs = this.actionSpecs.map((s) => ({
+        name: s.name,
+        description: s.description,
+      }));
+    }
+
+    if (this.config.model) {
+      structuredMeta.model = this.config.model;
+    }
+
+    if (this.config.languages) {
+      structuredMeta.languages = this.config.languages;
+    }
+
+    if (Object.keys(structuredMeta).length > 0) {
+      body.metadata = structuredMeta;
     }
 
     // Re-registration: include agent_id and auth token
