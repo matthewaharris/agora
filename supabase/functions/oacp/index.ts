@@ -477,13 +477,17 @@ async function handleMessageSend(req: Request): Promise<Response> {
 
   // Verify Ed25519 signature
   const payload = (body.payload as Record<string, unknown>) || {};
+  // Normalize null/undefined for consistent canonicalization
+  const correlationId = (body.correlation_id as string) || undefined;
+  const sequence = (body.sequence as number) ?? undefined;
+
   const canonicalMsg = canonicalizeMessage({
     sender_agent_id: senderAgentId,
     recipient_agent_id: body.recipient_agent_id as string,
     message_type: body.message_type as string,
     payload,
-    correlation_id: body.correlation_id as string | undefined,
-    sequence: body.sequence as number | undefined,
+    correlation_id: correlationId,
+    sequence: sequence,
   });
 
   const signatureValid = verifyMessageSignature(

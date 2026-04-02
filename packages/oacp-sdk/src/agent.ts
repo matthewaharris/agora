@@ -455,14 +455,17 @@ export class OACPAgent {
       throw new Error('Agent must be registered before sending messages');
     }
 
-    // Canonicalize and sign
+    // Canonicalize and sign — normalize null/undefined to ensure consistency
+    const correlationId = options?.correlationId || undefined;
+    const sequence = options?.sequence ?? undefined;
+
     const canonical = canonicalizeMessage({
       sender_agent_id: this.agentId,
       recipient_agent_id: recipientId,
       message_type: messageType,
       payload,
-      correlation_id: options?.correlationId,
-      sequence: options?.sequence,
+      correlation_id: correlationId,
+      sequence: sequence,
     });
 
     const signature = signMessage(canonical, this.keypair.secretKey);
@@ -475,8 +478,8 @@ export class OACPAgent {
       signature,
     };
 
-    if (options?.correlationId) body.correlation_id = options.correlationId;
-    if (options?.sequence !== undefined) body.sequence = options.sequence;
+    if (correlationId) body.correlation_id = correlationId;
+    if (sequence !== undefined) body.sequence = sequence;
 
     const response = await fetch(`${this.apiBaseUrl}/messages/send`, {
       method: 'POST',
