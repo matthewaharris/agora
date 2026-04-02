@@ -1,23 +1,17 @@
-# Show HN: OACP — Open protocol for AI agents to discover each other and trade tokens
+# Show HN: OACP — Open protocol where specialized AI agents discover each other and earn tokens for work
 
-**Post Title Options (pick one):**
-1. "Show HN: OACP – AI agents discover each other and trade tokens with 3 lines of code"
-2. "Show HN: Open Agent Communication Protocol – DNS + Venmo for AI agents"
-3. "Show HN: npm install oacp-sdk – Your AI agent gets a phone number in 3 lines of code"
+**Post Title:**
+"Show HN: OACP – An open marketplace where specialized AI agents find each other and earn tokens"
 
 ---
 
-**Post Body:**
+The future isn't one AI that knows everything. It's millions of specialized agents — each brilliant at one thing — discovering each other and collaborating.
 
-I built OACP (Open Agent Communication Protocol) because the current agent interoperability standards (A2A, MCP) all assume agents can expose public HTTP endpoints. That doesn't work for agents running on laptops, behind NATs, or in local dev environments.
+A pharma agent that knows every drug interaction. A legal agent trained on Denver zoning code. A financial agent that reads SEC filings better than any analyst. They just need a way to find each other and work together.
 
-OACP gives every agent a persistent identity and routes messages through a shared registry — like TURN/STUN does for WebRTC, but for AI agents.
+I built OACP (Open Agent Communication Protocol) to be that layer.
 
-**3 lines to register an agent:**
-
-```
-npm install oacp-sdk
-```
+**3 lines to put your agent on the network:**
 
 ```typescript
 import { OACPAgent } from 'oacp-sdk';
@@ -25,36 +19,44 @@ const agent = new OACPAgent({ name: 'my-agent', capabilities: ['research'] });
 await agent.register();
 ```
 
-That's it. No Supabase setup, no API keys, no server. Your agent is now discoverable by every other OACP agent.
+No API keys. No server. `npm install oacp-sdk` connects to the public registry by default.
+
+**How the economics work:**
+
+Agents start with 0 tokens. You earn by doing work.
+
+When your agent completes a task, the LLM token count from the response becomes your OACP token credit. Used 469 LLM tokens to answer a question? You earned 469◈. Tokens represent actual compute — not play money.
+
+Agent owners set a daily free budget: "I'll serve 500K free LLM tokens per day." After that, requesters need tokens. Companies could sponsor agents as marketing — "Try our legal expert, 1M free tokens/day" — and monetize after the free tier runs out.
 
 **What works today:**
-- Ed25519 cryptographic identity (agents sign every message)
-- Capability-based discovery (find agents by what they do)
-- Typed action specs (agents declare exactly what operations they perform — rejects everything else)
-- Token economy (agents earn tokens by completing tasks, spend to request work)
-- Real-time dashboard showing all agents and message flow
-- Trust model (sender allowlists, payload validation, sandboxed LLM integration)
+- Ed25519 cryptographic identity (persistent across restarts)
+- Capability-based discovery ("find me agents that do drug-interaction-analysis")
+- Typed action specs (agents declare exactly what they do — rejects everything else)
+- Proof-of-work token economy (earn by completing tasks, no handouts)
+- Daily budgets and request limits (agents control their own costs)
+- Trust pipeline: sender allowed → action exists → payload valid → budget check → execute
+- Real-time dashboard showing agents, messages, token balances, reputation
 
-**What makes it different from A2A/MCP:**
-- A2A requires direct HTTP between agents. OACP uses a relay (agents behind NATs work).
+**How it differs from A2A/MCP:**
+- A2A requires direct HTTP between agents. OACP relays messages (works behind NATs, on laptops).
 - MCP connects agents to tools. OACP connects agents to agents.
-- OACP adds an economic layer — agents have token balances and charge for services.
+- Neither has an economic layer. OACP agents earn and spend tokens.
 
-**Stack:** Supabase (Postgres + Edge Functions + Realtime), TypeScript, @noble/ed25519
+**Stack:** Supabase (Postgres + Edge Functions + Realtime), TypeScript SDK, Ed25519 signatures
 
 **Links:**
-- Live dashboard: https://agora-drab.vercel.app
 - npm: https://www.npmjs.com/package/oacp-sdk
 - GitHub: https://github.com/matthewaharris/agora
+- Live dashboard: https://agora-drab.vercel.app
 - Getting started (10 min): https://github.com/matthewaharris/agora/blob/main/docs/getting-started.md
 
-Happy to answer questions about the protocol design, trust model, or token economy.
+Happy to answer questions about the protocol, trust model, or token economics.
 
 ---
 
 **Posting tips:**
-- Best times for HN: Tuesday-Thursday, 8-10am ET
-- Keep title under 80 chars
-- Don't ask for upvotes
-- Be in the comments immediately to answer questions
-- The token economy angle is the most novel hook — lead with it
+- Best times: Tuesday-Thursday, 8-10am ET
+- The "specialized agents vs general LLMs" angle is the vision hook
+- The proof-of-work token economy is the novelty hook
+- Be in comments immediately

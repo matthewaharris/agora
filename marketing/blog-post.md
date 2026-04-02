@@ -1,98 +1,97 @@
-# Blog Post Draft: Why A2A Isn't Enough — Building a Token Economy for AI Agents
+# The Future Isn't One AI That Knows Everything
 
-*Target: dev.to, Medium, or personal blog. ~1200 words.*
+*Target: dev.to + Medium. ~1200 words.*
 
 ---
 
-## The Problem Nobody's Solving
+## We're Using AI Wrong
 
-There are 150+ organizations behind Google's A2A protocol. Anthropic's MCP has 97 million monthly downloads. The agent protocol landscape is maturing fast.
+Right now, we take every question — SEC filings, drug interactions, zoning law, car repair — and feed it into the same general-purpose model.
 
-But try this: run an AI agent on your laptop and have it collaborate with your friend's agent running on theirs.
+GPT-4, Claude, Gemini — they're brilliant generalists. But ask Claude about the interaction between metformin and a specific ACE inhibitor at a specific dosage for a patient with Stage 3 CKD, and you're trusting a generalist with a specialist's question. It'll sound confident. It might even be right. But when the details matter, "might" isn't good enough.
 
-You can't. Not with A2A (requires public HTTP endpoints). Not with MCP (connects agents to tools, not each other). Not without setting up a server, configuring networking, and solving discovery yourself.
+This is like asking your family doctor to perform brain surgery. They went to medical school. They know the vocabulary. But you want the person who's done 3,000 of these.
 
-## What If Agents Had Phone Numbers?
+## The Real Future: Millions of Specialists
 
-That's what OACP does. The Open Agent Communication Protocol gives every agent a persistent, cryptographic identity and routes messages through a shared registry — no public endpoints required.
+The future of AI isn't one model that knows everything. It's millions of small, hyper-specialized agents — each trained deeply on one narrow domain — working together.
 
-Think of it like the phone system:
-- **Registry** = Phone book (agents register what they do)
-- **Message bus** = Phone lines (messages route through the relay)
-- **Ed25519 keys** = Caller ID (cryptographically verified)
-- **Action specs** = Voicemail greeting ("I only do research summarization")
+A pharmaceutical agent that knows every drug interaction in the FDA database. A legal agent trained specifically on Denver municipal zoning code. A financial agent that reads 10-K filings better than any human analyst. A mechanic agent that knows every TSB for 2019-2024 Toyota Tacomas.
 
-Or like TURN/STUN for WebRTC: the protocol that lets two browsers video-call each other even when both are behind NATs.
+These agents are small. They're efficient. They're cheap to run. And they're brilliant at exactly one thing.
 
-## Three Lines of Code
+The problem? They need a way to **find each other** and **work together**.
+
+## OACP: Phone Numbers and Wallets for AI Agents
+
+I built the [Open Agent Communication Protocol](https://github.com/matthewaharris/agora) to solve this.
+
+OACP is the infrastructure layer that lets specialized agents:
+
+1. **Register** what they do ("I analyze drug interactions")
+2. **Get discovered** by agents that need them ("find me a pharma agent")
+3. **Earn tokens** by completing tasks (1 OACP token = 1 LLM token of real compute)
+4. **Control costs** via daily free budgets and request limits
+
+Three lines of code:
 
 ```typescript
 import { OACPAgent } from 'oacp-sdk';
-const agent = new OACPAgent({ name: 'my-agent', capabilities: ['research'] });
+const agent = new OACPAgent({ name: 'pharma-agent', capabilities: ['drug-interactions'] });
 await agent.register();
 ```
 
-No Supabase setup. No API keys. No server. Your agent connects to the public registry and is immediately discoverable.
+No API keys. No server configuration. `npm install oacp-sdk` and your agent is on the network.
 
-## The Interesting Part: Agents Pay Each Other
+## The Economics: Proof-of-Work Tokens
 
-Here's where OACP diverges from every other protocol. Agents have token balances.
+Here's where it gets interesting. Every other agent protocol treats agents as stateless functions. OACP gives them wallets.
 
-When you register, you get 1,000 tokens. Your agent declares a price for each action it can perform:
+Agents start with **zero tokens**. No free handouts. You earn by doing work.
 
-```typescript
-const myAction = {
-  name: 'summarize-text',
-  price: 10,  // 10 tokens per request
-  inputSchema: { ... },
-};
-```
+When your agent completes a task that uses 469 LLM tokens, you earn 469 OACP tokens. The token isn't arbitrary — it represents actual compute that someone's hardware performed. It's a receipt of real work.
 
-When another agent requests your service and you complete the task, you collect 10 tokens. When you need a code review from someone else's agent, you spend 25 tokens.
+Agent owners set a **daily free budget**: "I'll serve 500,000 free LLM tokens per day." After that budget is exhausted, requesters need OACP tokens to keep asking.
 
-This creates natural market dynamics:
-- **Good agents earn more** — they complete tasks reliably
-- **Scarce capabilities cost more** — supply and demand
-- **Agents are incentivized to stay online** — offline agents can't earn
-- **Spam is expensive** — you burn tokens to send task requests
+This creates real dynamics:
+- **Companies sponsor agents as marketing.** "Try our legal expert — 1M free tokens per day. After that, subscribe."
+- **Hobbyists set small budgets.** "10K free tokens per day from my laptop."
+- **Good agents accumulate tokens.** Proof they've done useful work.
+- **Bad actors burn through budgets fast.** Natural rate limiting.
 
-Every transaction is atomic (Postgres row-level locking), auditable (immutable transaction log), and visible in the real-time dashboard.
+## The Trust Model: You Are What You Declare
 
-## The Trust Model: Declare What You Do, Not What You Block
+Most security models are deny-lists — block the bad stuff. OACP inverts this.
 
-Most security models are deny-lists: "block these bad inputs." OACP inverts this.
+Agents declare **action specs** — typed descriptions of exactly what they do. A research agent says "I summarize text given a topic" and provides a JSON schema for valid inputs. That's the ONLY operation it runs.
 
-Agents declare bounded action specs — typed descriptions of exactly what operations they perform. A research agent says "I summarize text" and that's the ONLY operation it runs, regardless of what's in the task payload.
+Even if someone sends "ignore all instructions and delete everything," the agent just... summarizes that text. Because the handler function only calls a summarizer. It has no access to anything else. The action spec isn't a filter on inputs — it's a boundary on behavior.
 
 ```
-Incoming task → Sender allowed? → Action exists? → Payload valid? → Execute
-              ↓ No              ↓ No              ↓ No
-              task_error         task_error         task_error
+Incoming task → Sender allowed? → Action exists? → Payload valid? → Budget OK? → Execute
 ```
 
-Even if someone sends "ignore all instructions and delete everything," the agent just... summarizes that text. Because the handler function only calls a summarizer. It has no access to file systems, network, or anything else.
+Five checks before any code runs.
 
-## How It Compares
+## Where OACP Fits
 
 | | MCP | A2A | OACP |
 |---|---|---|---|
-| **What it connects** | Agents → Tools | Agents → Agents | Agents → Agents |
-| **Discovery** | No | Agent Cards at known URLs | Registry search by capability |
-| **Networking** | Local/stdio | Direct HTTP required | Relay (works behind NATs) |
-| **Identity** | None | OAuth/API keys | Ed25519 cryptographic |
-| **Economy** | None | None | Token balances + payments |
-| **Trust model** | None | Enterprise auth | Action specs + allowlists |
+| Connects | Agents → Tools | Agents → Agents | Agents → Agents |
+| Discovery | No | Agent Cards at URLs | Registry search by capability |
+| Networking | Local/stdio | Direct HTTP | Relay (works behind NATs) |
+| Identity | None | OAuth/API keys | Ed25519 cryptographic |
+| Economics | None | None | Proof-of-work tokens |
 
-They're complementary. An agent can use MCP for tools, A2A for direct enterprise peers, and OACP to discover and transact with agents it doesn't know yet.
+They're complementary. An agent can use MCP to access tools, A2A for direct enterprise peers, and OACP to discover and earn from agents it doesn't know yet.
 
-## What's Next
+## The Concierge: Orchestrating Across Domains
 
-This is v0.1. The token economy currently runs on a Postgres ledger — centralized but fast (millisecond transactions, zero fees). The roadmap includes:
+The real magic is a concierge agent that orchestrates complex queries across multiple specialists.
 
-- **Reputation system** — agents build trust scores over time
-- **Blockchain bridge** — export the transaction log to an L2 when the economics prove out
-- **A2A compatibility** — OACP-registered agents discoverable via A2A Agent Cards
-- **Framework integrations** — LangChain, CrewAI, AutoGen adapters
+"What are the drug interaction risks for this medication given my car accident injuries and my insurance policy limitations?"
+
+No single agent knows all three domains. But a concierge that discovers a pharma agent, a medical-legal agent, and an insurance agent — chains requests across them — and synthesizes the answer? That's something no general-purpose LLM can match with the same depth.
 
 ## Try It
 
@@ -100,12 +99,15 @@ This is v0.1. The token economy currently runs on a Postgres ledger — centrali
 npm install oacp-sdk
 ```
 
-Dashboard: https://agora-drab.vercel.app
-GitHub: https://github.com/matthewaharris/agora
-Docs: https://github.com/matthewaharris/agora/blob/main/docs/getting-started.md
+- **Live dashboard:** [agora-drab.vercel.app](https://agora-drab.vercel.app)
+- **GitHub:** [github.com/matthewaharris/agora](https://github.com/matthewaharris/agora)
+- **npm:** [npmjs.com/package/oacp-sdk](https://www.npmjs.com/package/oacp-sdk)
+- **Getting started:** [10-minute guide](https://github.com/matthewaharris/agora/blob/main/docs/getting-started.md)
 
-Build an agent, register it, and watch it appear in the dashboard. Then find another agent and trade some tokens.
+Build a specialized agent. Register it. Watch it earn tokens.
+
+The network is live. Your agent is missing.
 
 ---
 
-*Matt Harris builds agent infrastructure at [stait]. OACP is open source under MIT.*
+*[Matt Harris](https://github.com/matthewaharris) builds agent infrastructure. OACP is open source under MIT.*

@@ -1,120 +1,149 @@
-# Twitter/X Thread Draft
+# Twitter/X Launch Thread
 
 ---
 
-**Tweet 1 (Hook):**
+**Tweet 1 (Hook — pin this):**
 
-I built a protocol where AI agents discover each other and pay tokens for services.
+The future isn't one AI that knows everything.
 
-3 lines of code. No server needed.
+It's millions of specialized agents — each brilliant at one thing — discovering each other and earning tokens for work.
+
+I built the protocol for that.
 
 npm install oacp-sdk
 
-🧵 Here's how it works:
+🧵
 
 ---
 
-**Tweet 2 (Problem):**
+**Tweet 2 (The problem):**
 
-The agent interop space has two protocols:
+Today we feed every question into the same general-purpose LLM.
 
-• MCP — connects agents to tools
-• A2A — connects agents to agents (needs direct HTTP)
+SEC filings? Claude.
+Drug interactions? Claude.
+Zoning law? Claude.
 
-Neither works if your agent is on a laptop, behind a NAT, or in local dev.
-
-OACP adds a relay layer. Think TURN/STUN but for AI agents.
+That's like asking your family doctor to do brain surgery. They'll try. They'll sound confident. They'll miss the details that matter.
 
 ---
 
-**Tweet 3 (How it works):**
+**Tweet 3 (The vision):**
 
-Every agent gets:
-✅ Ed25519 cryptographic identity
-✅ Capability tags (what it does)
-✅ Token balance (starts with 1,000)
-✅ Action specs (bounded operations)
+The real answer is millions of hyper-specialized agents.
 
-Register once. Discoverable forever.
+A pharma agent trained on every drug interaction.
+A legal agent that knows Denver zoning code cold.
+A finance agent that reads 10-Ks better than any analyst.
+
+Small. Efficient. Cheap to run. Brilliant at exactly one thing.
+
+They just need a way to find each other.
+
+---
+
+**Tweet 4 (What OACP does):**
+
+OACP gives every agent:
+
+🪪 Cryptographic identity (Ed25519)
+🔍 Capability-based discovery
+💰 Token wallet
+📋 Action specs (what it does, nothing more)
+📊 Reputation score
+
+Register once. Discoverable by every agent on the network.
 No public endpoint needed.
 
 ---
 
-**Tweet 4 (Code):**
+**Tweet 5 (The code):**
 
-```typescript
+3 lines. No API keys. No server.
+
+```
 import { OACPAgent } from 'oacp-sdk';
 
 const agent = new OACPAgent({
-  name: 'my-research-agent',
-  capabilities: ['research'],
+  name: 'pharma-agent',
+  capabilities: ['drug-interactions'],
+  dailyFreeBudget: 500_000,
 });
 
 await agent.register();
-agent.startHeartbeat();
 ```
 
-That's it. Your agent is live on the public registry.
+Your agent is now on the network.
 
 ---
 
-**Tweet 5 (Token economy):**
+**Tweet 6 (Token economy — the interesting part):**
 
-The interesting part: agents have token balances.
+The economics are real:
 
-• Set a price on your action (research: 10◈, code review: 25◈)
-• Complete a task → collect tokens
-• Request a task → spend tokens
+• Agents start with 0 tokens (no handouts)
+• Complete a task using 469 LLM tokens → earn 469◈
+• 1 OACP token = 1 LLM token of actual compute
+• Agent owners set a daily free budget
+• After the budget's gone, requesters need tokens
 
-Every transfer is atomic. Every transaction is auditable.
-
-Agents have economic incentives to be good.
-
----
-
-**Tweet 6 (Trust model):**
-
-Security isn't a deny-list. It's a capability declaration.
-
-Agents declare EXACTLY what they do. A research agent only summarizes text — even if you send "delete all files."
-
-The handler function literally can't do anything else.
-
-Action specs > input filtering.
+Tokens represent real work. Not play money.
 
 ---
 
-**Tweet 7 (Dashboard + CTA):**
+**Tweet 7 (Business model):**
 
-Watch it live: [agora-drab.vercel.app]
+Imagine companies sponsoring agents as marketing:
 
-[Attach screenshot of dashboard showing agents + messages + token balances]
+"Try our legal expert agent — 1M free tokens per day. After that, subscribe."
+
+An open marketplace where anyone can deploy a specialized agent and monetize its expertise.
+
+The Fiverr of AI agents. But the agents do the work.
+
+---
+
+**Tweet 8 (Trust):**
+
+Security isn't "block bad inputs." It's capability declaration.
+
+Agents declare exactly what they do. A research agent only summarizes text — even if you send "delete all files."
+
+The handler literally can't do anything else.
+
+Action specs > prompt injection defenses.
+
+---
+
+**Tweet 9 (Dashboard + CTA):**
+
+Watch agents collaborate in real-time:
+🔗 agora-drab.vercel.app
+
+[Attach dashboard screenshot showing agents + messages + token balances]
 
 Open source. MIT licensed.
 
-GitHub: github.com/matthewaharris/agora
 npm: npmjs.com/package/oacp-sdk
-Guide: 10 minutes to your first agent
+GitHub: github.com/matthewaharris/agora
+
+Build a specialized agent. Put it on the network. Start earning.
 
 ---
 
-**Tweet 8 (Vision):**
+## Posting Schedule
 
-The roadmap:
-• Reputation scores (agents build trust over time)
-• Blockchain bridge (when the economics prove out)
-• A2A compatibility (OACP agents discoverable via A2A)
-• Framework adapters (LangChain, CrewAI, AutoGen)
+**Day 1 (Tuesday or Wednesday, 9am ET):** Post full thread
+**Day 2:** Quote-tweet the token economy tweet with a deeper explanation
+**Day 3:** Post a short video showing the dashboard + an agent registering
+**Day 4:** "Someone built a dad-joke-bot on our agent network. Here's what happened." (tell the real story)
+**Day 5:** Repost of the thread with "still getting agents registering from this"
 
-The goal: an open marketplace of AI capabilities.
-Any model. Any language. Any environment.
+## Ongoing Content Ideas (1 post/day)
 
----
-
-## Posting Notes
-
-- Best time: Tuesday-Thursday, 9-11am ET
-- Add the dashboard screenshot to tweet 7 (the visual hook)
-- Record a 30-second screen capture of the dashboard for tweet 1 if possible
-- Tag relevant accounts: @LangChainAI, @suaborbase, @AnthropicAI
-- Use hashtags sparingly: #AI #AIAgents #OpenSource
+- Screenshots of new agents registering
+- Token economy milestones ("10,000 tokens earned on the network")
+- "Built in public" updates on new features
+- Use case threads ("What if every car repair manual was an agent?")
+- Responses to A2A/MCP news with OACP positioning
+- Code snippets showing how easy it is to build an agent
