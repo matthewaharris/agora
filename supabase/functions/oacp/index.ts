@@ -48,6 +48,7 @@ const RATE_LIMITS: Record<string, { window: number; max: number }> = {
   '/messages/send': { window: 60, max: 30 },
   '/discover': { window: 60, max: 60 },
   '/collect-payment': { window: 60, max: 30 },
+  '/credit-work': { window: 60, max: 30 },
   '/transfer': { window: 60, max: 20 },
 };
 
@@ -997,6 +998,77 @@ async function handleCollectPayment(req: Request): Promise<Response> {
  * Stub handler for unimplemented routes.
  */
 // ============================================================
+// Credit Work (proof-of-work earning)
+// ============================================================
+
+async function handleCreditWork(req: Request): Promise<Response> {
+  let body: Record<string, unknown>;
+  try { body = await req.json(); } catch { return errorResponse('Invalid JSON', 400); }
+
+  const errors = validateRequired(body, ['agent_id', 'tokens_used']);
+  if (errors.length > 0) return validationErrorResponse(errors);
+
+  const token = extractBearerToken(req);
+  if (!token) return errorResponse('Authorization required', 401);
+
+  const supabase = getSupabaseAdmin();
+  const tokenHash = await hashToken(token);
+
+  // Verify the agent is crediting itself
+  const { data: agent } = await supabase
+    .from('agents')
+    .select('agent_id, registry_token, name')
+    .eq('agent_id', body.agent_id)
+    .single();
+
+  if (!agent || agent.registry_token !== tokenHash) {
+    return errorResponse('Unauthorized — agents can only credit themselves', 403);
+  }
+
+  const tokensUsed = body.tokens_used as number;
+  if (typeof tokensUsed !== 'number' || tokensUsed <= 0 || tokensUsed > 100000) {
+    return errorResponse('tokens_used must be between 1 and 100,000', 400);
+  }
+
+  // Verify the message exists and this agent was the recipient (they did the work)
+  if (body.message_id) {
+    const { data: msg } = await supabase
+      .from('messages')
+      .select('recipient_agent_id')
+      .eq('message_id', body.message_id)
+      .single();
+
+    if (msg && msg.recipient_agent_id !== body.agent_id) {
+      return errorResponse('Agent was not the recipient of this task', 403);
+    }
+  }
+
+  // Credit the agent
+  const { data: txId, error: creditError } = await supabase.rpc('oacp_credit_work', {
+    p_agent_id: body.agent_id,
+    p_tokens_used: tokensUsed,
+    p_message_id: (body.message_id as string) || null,
+    p_description: `Proof-of-work: ${tokensUsed} LLM tokens used`,
+  });
+
+  if (creditError) {
+    console.error('[OACP] Credit work error:', creditError);
+    return errorResponse('Failed to credit work', 500);
+  }
+
+  // Update reputation
+  await supabase.rpc('oacp_update_reputation', {
+    p_agent_id: body.agent_id,
+    p_completed: true,
+    p_response_ms: (body.duration_ms as number) || null,
+  });
+
+  console.log(`[OACP] 💰 Credited ${tokensUsed} tokens to ${agent.name} (proof-of-work)`);
+
+  return jsonResponse({ transaction_id: txId, tokens_credited: tokensUsed, status: 'credited' }, 201);
+}
+
+// ============================================================
 // Teams
 // ============================================================
 
@@ -1345,6 +1417,9 @@ const routes: Record<string, Record<string, RouteHandler>> = {
   },
   '/collect-payment': {
     POST: (req) => handleCollectPayment(req),
+  },
+  '/credit-work': {
+    POST: (req) => handleCreditWork(req),
   },
   '/teams/create': {
     POST: (req) => handleCreateTeam(req),

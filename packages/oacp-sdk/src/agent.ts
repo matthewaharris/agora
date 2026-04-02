@@ -179,6 +179,10 @@ export class OACPAgent {
       structuredMeta.languages = this.config.languages;
     }
 
+    if (this.config.dailyFreeBudget !== undefined) {
+      structuredMeta.daily_free_budget = this.config.dailyFreeBudget;
+    }
+
     if (Object.keys(structuredMeta).length > 0) {
       body.metadata = structuredMeta;
     }
@@ -771,35 +775,34 @@ export class OACPAgent {
           correlationId: msg.correlation_id,
         });
 
-        // Auto-collect payment if this action has a price
-        if (action.price && action.price > 0 && this.agentId) {
+        // Credit this agent for the work done (proof-of-work)
+        // If the result contains tokens_used, credit that amount
+        const tokensUsed = (result as Record<string, unknown>).tokens_used as number | undefined;
+        if (tokensUsed && tokensUsed > 0 && this.agentId) {
           try {
-            // Call server-side payment collection — server verifies the task was real
-            const response = await fetch(`${this.apiBaseUrl}/collect-payment`, {
+            const response = await fetch(`${this.apiBaseUrl}/credit-work`, {
               method: 'POST',
               headers: {
                 'Content-Type': 'application/json',
                 Authorization: `Bearer ${this.registryToken}`,
               },
               body: JSON.stringify({
-                provider_agent_id: this.agentId,
-                requester_agent_id: senderId,
-                amount: action.price,
+                agent_id: this.agentId,
+                tokens_used: tokensUsed,
                 message_id: msg.message_id,
-                action_name: action.name,
               }),
             });
 
             if (response.ok) {
               // deno-lint-ignore no-explicit-any
               const data = (await response.json()) as any;
-              console.log(`[OACP] 💰 Collected ${action.price} tokens from ${senderId.substring(0, 8)}... (tx: ${data.transaction_id})`);
+              console.log(`[OACP] 💰 Earned ${tokensUsed} tokens (proof-of-work, tx: ${data.transaction_id})`);
             } else {
               const errText = await response.text();
-              console.warn(`[OACP] ⚠️ Payment collection failed (${response.status}): ${errText.substring(0, 100)}`);
+              console.warn(`[OACP] ⚠️ Credit failed (${response.status}): ${errText.substring(0, 100)}`);
             }
           } catch (payErr) {
-            console.warn(`[OACP] ⚠️ Payment collection error: ${payErr instanceof Error ? payErr.message : payErr}`);
+            console.warn(`[OACP] ⚠️ Credit error: ${payErr instanceof Error ? payErr.message : payErr}`);
           }
         }
       }

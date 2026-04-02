@@ -64,6 +64,9 @@ export interface AgentConfig {
   /** Languages this agent can process (ISO 639-1 codes) */
   languages?: string[];
 
+  /** Max LLM tokens this agent will serve free per day (0 = unlimited, default: 0) */
+  dailyFreeBudget?: number;
+
   /**
    * Base URL for OACP API (default: {supabaseUrl}/functions/v1/oacp)
    * Override for custom deployments.
