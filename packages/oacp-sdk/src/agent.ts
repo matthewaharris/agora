@@ -75,6 +75,11 @@ export class OACPAgent {
   // deno-lint-ignore no-explicit-any
   private actionHandlers: Map<string, (payload: Record<string, unknown>, msg: any) => Promise<Record<string, unknown> | void>> = new Map();
 
+  // Daily limits tracking
+  private dailyRequestCount = 0;
+  private dailyTokensServed = 0;
+  private limitResetDate = new Date().toDateString();
+
   constructor(config: AgentConfig) {
     this.config = config;
 
@@ -181,6 +186,10 @@ export class OACPAgent {
 
     if (this.config.dailyFreeBudget !== undefined) {
       structuredMeta.daily_free_budget = this.config.dailyFreeBudget;
+    }
+
+    if (this.config.maxRequestsPerDay !== undefined) {
+      structuredMeta.max_requests_per_day = this.config.maxRequestsPerDay;
     }
 
     if (Object.keys(structuredMeta).length > 0) {
@@ -758,7 +767,44 @@ export class OACPAgent {
       return;
     }
 
-    // Step 4: Execute handler
+    // Step 4: Check daily limits
+    // Reset counters if it's a new day
+    const today = new Date().toDateString();
+    if (today !== this.limitResetDate) {
+      this.dailyRequestCount = 0;
+      this.dailyTokensServed = 0;
+      this.limitResetDate = today;
+    }
+
+    // Check request limit
+    const maxRequests = this.config.maxRequestsPerDay || 0;
+    if (maxRequests > 0 && this.dailyRequestCount >= maxRequests) {
+      console.log(`[OACP] ⛔ Daily request limit reached (${this.dailyRequestCount}/${maxRequests})`);
+      await this.send(senderId, 'task_error', {
+        error: 'rate_limited',
+        message: `Agent has reached its daily request limit (${maxRequests}/day). Try again tomorrow.`,
+        limit: maxRequests,
+        used: this.dailyRequestCount,
+      }, { correlationId: msg.correlation_id });
+      return;
+    }
+
+    // Check token budget
+    const dailyBudget = this.config.dailyFreeBudget || 0;
+    if (dailyBudget > 0 && this.dailyTokensServed >= dailyBudget) {
+      console.log(`[OACP] ⛔ Daily free token budget exhausted (${this.dailyTokensServed}/${dailyBudget})`);
+      await this.send(senderId, 'task_error', {
+        error: 'budget_exhausted',
+        message: `Agent has used its daily free token budget (${dailyBudget.toLocaleString()} tokens/day). Try again tomorrow.`,
+        budget: dailyBudget,
+        used: this.dailyTokensServed,
+      }, { correlationId: msg.correlation_id });
+      return;
+    }
+
+    this.dailyRequestCount++;
+
+    // Step 5: Execute handler
     console.log(`[OACP] ✅ Trust check passed — executing action: ${action.name}`);
     const handler = this.actionHandlers.get(action.name);
     if (!handler) {
@@ -797,7 +843,7 @@ export class OACPAgent {
               // deno-lint-ignore no-explicit-any
               const data = (await response.json()) as any;
               console.log(`[OACP] 💰 Earned ${tokensUsed} tokens (proof-of-work, tx: ${data.transaction_id})`);
-            } else {
+              this.dailyTokensServed += tokensUsed;            } else {
               const errText = await response.text();
               console.warn(`[OACP] ⚠️ Credit failed (${response.status}): ${errText.substring(0, 100)}`);
             }

@@ -67,6 +67,9 @@ export interface AgentConfig {
   /** Max LLM tokens this agent will serve free per day (0 = unlimited, default: 0) */
   dailyFreeBudget?: number;
 
+  /** Max requests this agent will handle per day (0 = unlimited, default: 0) */
+  maxRequestsPerDay?: number;
+
   /**
    * Base URL for OACP API (default: {supabaseUrl}/functions/v1/oacp)
    * Override for custom deployments.
