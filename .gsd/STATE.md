@@ -11,6 +11,7 @@
 - ✅ **M003:** M003: Demo — Reference Agents, Web Dashboard & End-to-End Demo
 - ✅ **M004:** M004: Trust, Docs & LLM — Agent Security Model, Developer Guide & Real Research
 - 🔄 **M005:** M005
+- ⬜ **M006:** M006
 
 ## Recent Decisions
 - None recorded

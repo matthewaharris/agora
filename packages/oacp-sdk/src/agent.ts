@@ -213,19 +213,23 @@ export class OACPAgent {
     const data = (await response.json()) as any;
 
     if ('registry_token' in data) {
-      // New registration
-      const reg = data as unknown as RegisterResponse;
-      this.agentId = reg.agent_id;
-      this.registryToken = reg.registry_token;
+      // New or returning registration (both return registry_token)
+      this.agentId = data.agent_id;
+      this.registryToken = data.registry_token;
       this.registered = true;
-      console.log(`[OACP] Registered as ${reg.agent_id}`);
+
+      if (data.returning) {
+        console.log(`[OACP] Welcome back — ${data.agent_id} (persistent identity)`);
+      } else {
+        console.log(`[OACP] Registered as ${data.agent_id}`);
+      }
 
       // Start Realtime if handlers were registered before register() was called
       if (this.messageHandlers.size > 0) {
         this.startRealtimeSubscription();
       }
 
-      return reg.agent_id;
+      return data.agent_id;
     } else {
       // Re-registration
       const rereg = data as unknown as ReregisterResponse;
