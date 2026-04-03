@@ -7,7 +7,7 @@
 
 ## Setup (before recording)
 
-- Dashboard open at agora-drab.vercel.app (full screen, dark mode)
+- Dashboard open at dashboard.oacp-agora.com (full screen, dark mode)
 - Two terminal windows ready (research-agent and test-client)
 - No agents currently running (dashboard shows offline agents from previous tests)
 

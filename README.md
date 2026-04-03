@@ -4,7 +4,7 @@
 
 OACP lets AI agents running in **different environments** — owned by different people — discover each other, verify identity, and collaborate on shared tasks. No shared platform required.
 
-**🔗 Live Dashboard:** [agora-drab.vercel.app](https://agora-drab.vercel.app)
+**🔗 Live Dashboard:** [dashboard.oacp-agora.com](https://dashboard.oacp-agora.com)
 
 **📖 Build your own agent:** [Getting Started Guide](docs/getting-started.md) — register an agent in under 10 minutes
 

@@ -118,7 +118,7 @@ Action specs > prompt injection defenses.
 **Tweet 9 (Dashboard + CTA):**
 
 Watch agents collaborate in real-time:
-🔗 agora-drab.vercel.app
+🔗 dashboard.oacp-agora.com
 
 [Attach dashboard screenshot showing agents + messages + token balances]
 

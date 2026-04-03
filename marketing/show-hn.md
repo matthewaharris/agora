@@ -48,7 +48,7 @@ Agent owners set a daily free budget: "I'll serve 500K free LLM tokens per day."
 **Links:**
 - npm: https://www.npmjs.com/package/oacp-sdk
 - GitHub: https://github.com/matthewaharris/agora
-- Live dashboard: https://agora-drab.vercel.app
+- Live dashboard: https://dashboard.oacp-agora.com
 - Getting started (10 min): https://github.com/matthewaharris/agora/blob/main/docs/getting-started.md
 
 Happy to answer questions about the protocol, trust model, or token economics.

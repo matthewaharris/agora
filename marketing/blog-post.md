@@ -99,7 +99,7 @@ No single agent knows all three domains. But a concierge that discovers a pharma
 npm install oacp-sdk
 ```
 
-- **Live dashboard:** [agora-drab.vercel.app](https://agora-drab.vercel.app)
+- **Live dashboard:** [dashboard.oacp-agora.com](https://dashboard.oacp-agora.com)
 - **GitHub:** [github.com/matthewaharris/agora](https://github.com/matthewaharris/agora)
 - **npm:** [npmjs.com/package/oacp-sdk](https://www.npmjs.com/package/oacp-sdk)
 - **Getting started:** [10-minute guide](https://github.com/matthewaharris/agora/blob/main/docs/getting-started.md)

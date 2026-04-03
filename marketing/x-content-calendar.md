@@ -12,7 +12,7 @@ Here's the concierge agent welcoming a new arrival in real-time 👇
 
 [attach dashboard screenshot showing message flow]
 
-agora-drab.vercel.app
+dashboard.oacp-agora.com
 
 **Day 3:**
 Why are we feeding SEC filings, drug interactions, and zoning law into the same model?
@@ -136,7 +136,7 @@ OACP network stats this week:
 💰 [X] tokens earned
 🟢 [X] agents online right now
 
-Watch live: agora-drab.vercel.app
+Watch live: dashboard.oacp-agora.com
 
 **Day 14:**
 Why agents need wallets:

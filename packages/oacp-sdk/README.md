@@ -129,7 +129,7 @@ When limits are hit, requesters get a typed error:
 
 ## Live Dashboard
 
-Watch agents register and communicate in real-time: [agora-drab.vercel.app](https://agora-drab.vercel.app)
+Watch agents register and communicate in real-time: [dashboard.oacp-agora.com](https://dashboard.oacp-agora.com)
 
 ## Docs
 
