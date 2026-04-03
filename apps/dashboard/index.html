@@ -199,6 +199,56 @@
       font-weight: normal;
     }
 
+    /* Collapsible sections */
+    .section-divider {
+      padding: 8px 16px;
+      font-size: 12px;
+      font-weight: 600;
+      color: var(--text-dim);
+      background: var(--surface);
+      border-bottom: 1px solid var(--border);
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      user-select: none;
+    }
+
+    .section-divider:hover { background: #1f1f23; }
+
+    .section-divider .chevron {
+      transition: transform 0.2s;
+      font-size: 10px;
+    }
+
+    .section-divider .chevron.collapsed {
+      transform: rotate(-90deg);
+    }
+
+    .section-divider .section-count {
+      color: var(--accent);
+      font-weight: normal;
+      margin-left: auto;
+    }
+
+    .section-collapsed { display: none; }
+
+    /* Hide inactive toggle */
+    .toggle-row {
+      padding: 6px 16px;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      font-size: 12px;
+      color: var(--text-dim);
+      border-bottom: 1px solid var(--border);
+      background: var(--bg);
+    }
+
+    .toggle-row input[type="checkbox"] {
+      accent-color: var(--accent);
+    }
+
     /* Agent cards */
     .agent-card {
       padding: 12px 16px;
@@ -630,6 +680,10 @@
         </select>
         <button class="clear-btn" onclick="clearFilters()">Clear</button>
       </div>
+      <div class="toggle-row">
+        <input type="checkbox" id="hideOfflineMessages" onchange="renderMessages()">
+        <label for="hideOfflineMessages">Hide messages from inactive agents</label>
+      </div>
       <div id="messageList">
         <div class="empty">
           <div class="icon">💬</div>
@@ -914,7 +968,7 @@
         return a.name.localeCompare(b.name);
       });
 
-      container.innerHTML = agentArray.map(agent => {
+      function agentCardHtml(agent) {
         const caps = (agent.capabilities || [])
           .map(c => `<span class="cap-tag">${esc(c)}</span>`)
           .join('');
@@ -923,7 +977,6 @@
           ? timeAgo(new Date(agent.last_seen_at))
           : 'never';
 
-        // Model info from metadata
         const meta = agent.metadata || {};
         const model = meta.model;
         const modelStr = model
@@ -961,7 +1014,48 @@
             </div>
           </div>
         `;
-      }).join('');
+      }
+
+      const onlineAgents = agentArray.filter(a => a.status === 'online');
+      const offlineAgents = agentArray.filter(a => a.status !== 'online');
+
+      let html = '';
+
+      // Online agents — always shown
+      if (onlineAgents.length > 0) {
+        html += onlineAgents.map(agentCardHtml).join('');
+      }
+
+      // Offline agents — collapsible
+      if (offlineAgents.length > 0) {
+        const isCollapsed = offlineAgentsCollapsed;
+        html += `
+          <div class="section-divider" onclick="toggleOfflineAgents()">
+            <span class="chevron ${isCollapsed ? 'collapsed' : ''}" id="offlineChevron">▼</span>
+            Inactive Agents
+            <span class="section-count">${offlineAgents.length}</span>
+          </div>
+          <div id="offlineSection" class="${isCollapsed ? 'section-collapsed' : ''}">
+            ${offlineAgents.map(agentCardHtml).join('')}
+          </div>
+        `;
+      }
+
+      container.innerHTML = html;
+    }
+
+    let offlineAgentsCollapsed = true;
+
+    function toggleOfflineAgents() {
+      offlineAgentsCollapsed = !offlineAgentsCollapsed;
+      const section = document.getElementById('offlineSection');
+      const chevron = document.getElementById('offlineChevron');
+      if (section) {
+        section.classList.toggle('section-collapsed', offlineAgentsCollapsed);
+      }
+      if (chevron) {
+        chevron.classList.toggle('collapsed', offlineAgentsCollapsed);
+      }
     }
 
     let activeThreadFilter = null; // correlation_id to highlight
@@ -991,6 +1085,19 @@
 
       if (activeThreadFilter) {
         filtered = filtered.filter(m => m.correlation_id === activeThreadFilter);
+      }
+
+      // Hide messages from inactive agents
+      const hideOffline = document.getElementById('hideOfflineMessages')?.checked;
+      if (hideOffline) {
+        const onlineIds = new Set(
+          Array.from(agents.values())
+            .filter(a => a.status === 'online')
+            .map(a => a.agent_id)
+        );
+        filtered = filtered.filter(m =>
+          onlineIds.has(m.sender_agent_id) || onlineIds.has(m.recipient_agent_id)
+        );
       }
 
       countEl.textContent = activeThreadFilter
