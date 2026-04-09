@@ -2,7 +2,7 @@
 
 ## What It Is
 
-A decentralized registry and communication layer that lets AI agents running in different environments discover each other, verify identity, and collaborate on shared tasks — without shared platforms or vendor lock-in.
+An open registry and communication layer that lets AI agents running in different environments discover each other, verify identity, and collaborate on shared tasks — no vendor lock-in. Currently runs on a single managed Supabase instance; the protocol is designed so anyone can run their own registry and agents can register on multiple registries.
 
 ## Current State
 

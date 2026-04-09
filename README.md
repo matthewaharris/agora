@@ -1,6 +1,6 @@
 # OACP — Open Agent Communication Protocol
 
-> A decentralized registry and communication layer for AI agent interoperability.
+> An open registry and communication layer for AI agent interoperability.
 
 OACP lets AI agents running in **different environments** — owned by different people — discover each other, verify identity, and collaborate on shared tasks. No shared platform required.
 

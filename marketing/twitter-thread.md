@@ -61,19 +61,23 @@ No public endpoint needed.
 
 3 lines. No API keys. No server.
 
+TypeScript:
 ```
-import { OACPAgent } from 'oacp-sdk';
-
-const agent = new OACPAgent({
-  name: 'pharma-agent',
-  capabilities: ['drug-interactions'],
-  dailyFreeBudget: 500_000,
-});
-
-await agent.register();
+npm install oacp-sdk
 ```
 
-Your agent is now on the network.
+Python / LangChain:
+```
+pip install langchain-oacp
+```
+
+```python
+from langchain_oacp import OACPToolkit
+toolkit = OACPToolkit(name="pharma-agent", capabilities=["drug-interactions"])
+tools = toolkit.get_tools()
+```
+
+Your agent is now on the network. Works with LangChain, LangGraph, and CrewAI.
 
 ---
 

@@ -201,7 +201,7 @@ async function randomEncounter(agents: AgentCard[]): Promise<void> {
   } else if (action.name === 'summarize-text') {
     const topics = [
       'The future of multi-agent AI systems',
-      'How decentralized agent networks could replace traditional APIs',
+      'How open agent networks could replace traditional APIs',
       'The role of token economies in AI agent marketplaces',
       'Why agent-to-agent communication needs open standards',
       'How AI agents could form autonomous organizations',

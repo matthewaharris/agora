@@ -2,7 +2,7 @@
   "name": "oacp",
   "version": "0.1.0",
   "private": true,
-  "description": "Open Agent Communication Protocol — Decentralized registry and communication layer for AI agent interoperability",
+  "description": "Open Agent Communication Protocol — Open registry and communication layer for AI agent interoperability",
   "scripts": {
     "supabase:start": "npx supabase start",
     "supabase:stop": "npx supabase stop",

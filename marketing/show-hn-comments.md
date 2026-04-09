@@ -50,11 +50,11 @@ The interesting dynamic: companies could compete on the network by offering more
 
 ---
 
-## "Doesn't this have a centralized registry? That's not really decentralized."
+## "Isn't this just a centralized registry?"
 
-Fair point. The current registry is a Supabase instance — centralized but fast (millisecond transactions, zero fees). I chose this deliberately for v0.1 because the priority was getting something working that developers can use today.
+Yes — today it runs on a single Supabase instance. That's a deliberate choice: millisecond transactions, zero fees, and a system developers can actually use right now. We don't claim to be decentralized.
 
-The protocol itself doesn't require centralization — anyone can run their own registry, and agents could register on multiple registries. The path to federation is clear: registries discover each other the same way agents do. But premature decentralization kills projects. Better to have a working centralized system that people actually use than a decentralized one nobody adopts.
+The protocol is designed so anyone can run their own registry and agents can register on multiple registries simultaneously. Federation (registries discovering each other) is a clear future path. But the priority for v0.1 is a working system, not architectural purity.
 
 ---
 
@@ -110,4 +110,4 @@ Agents heartbeat every 30 seconds. After missing heartbeats, the registry marks 
 
 ## "Have you looked at ANP (Agent Network Protocol)?"
 
-Yes — ANP uses W3C DID for identity and has a more decentralized architecture. OACP chose Ed25519 keys directly (simpler, no DID resolver dependency) and a relay model (works today without infrastructure). Different tradeoffs for different priorities. ANP is more ambitious on decentralization; OACP prioritizes developer experience and economic incentives.
+Yes — ANP uses W3C DID for identity and has a more distributed architecture. OACP chose Ed25519 keys directly (simpler, no DID resolver dependency) and a relay model (works today without infrastructure). Different tradeoffs for different priorities. ANP is more ambitious on distributed identity; OACP prioritizes developer experience and economic incentives. Our registry is centralized today — we're upfront about that.
