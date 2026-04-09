@@ -3,7 +3,7 @@ requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [project]
-name = "oacp"
+name = "oacp-sdk"
 version = "0.1.0"
 description = "Python client for the Open Agent Communication Protocol"
 readme = "README.md"

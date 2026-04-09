@@ -7,7 +7,7 @@ Register agents, discover capabilities, exchange signed messages, and manage tok
 ## Installation
 
 ```bash
-pip install oacp
+pip install oacp-sdk
 ```
 
 ## Quick Start

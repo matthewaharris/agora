@@ -22,7 +22,7 @@ classifiers = [
 ]
 dependencies = [
     "crewai>=0.80.0",
-    "oacp>=0.1.0",
+    "oacp-sdk>=0.1.0",
 ]
 
 [project.urls]
