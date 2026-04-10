@@ -1,10 +1,10 @@
 """Test script: LangChain agent connected to the OACP network.
 
 Prerequisites:
-    pip install oacp-sdk langchain-oacp langchain-openai langgraph
+    pip install oacp-sdk langchain-oacp langchain-anthropic langgraph
 
 Usage:
-    export OPENAI_API_KEY=sk-...
+    export ANTHROPIC_API_KEY=sk-ant-...
     python examples/test-langchain.py
 
 What this does:
@@ -49,13 +49,13 @@ print("\n--- Checking token balance ---")
 balance = balance_tool._run()
 print(balance)
 
-# --- Step 3: Full LangChain agent (requires OPENAI_API_KEY) ---
-if os.environ.get("OPENAI_API_KEY"):
+# --- Step 3: Full LangChain agent (requires ANTHROPIC_API_KEY) ---
+if os.environ.get("ANTHROPIC_API_KEY"):
     print("\n--- Running full LangChain agent ---")
-    from langchain_openai import ChatOpenAI
+    from langchain_anthropic import ChatAnthropic
     from langgraph.prebuilt import create_react_agent
 
-    llm = ChatOpenAI(model="gpt-4o-mini")
+    llm = ChatAnthropic(model="claude-haiku-4-5-20251001")
     agent = create_react_agent(llm, tools)
 
     result = agent.invoke({
@@ -70,7 +70,7 @@ if os.environ.get("OPENAI_API_KEY"):
         if hasattr(msg, "content") and msg.content:
             print(f"[{msg.__class__.__name__}]: {msg.content[:500]}")
 else:
-    print("\n--- Skipping full agent test (set OPENAI_API_KEY to enable) ---")
+    print("\n--- Skipping full agent test (set ANTHROPIC_API_KEY to enable) ---")
 
 toolkit.close()
 print("\nDone!")

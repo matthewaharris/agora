@@ -4,7 +4,7 @@ Prerequisites:
     pip install oacp-sdk crewai-oacp crewai[tools]
 
 Usage:
-    export OPENAI_API_KEY=sk-...
+    export ANTHROPIC_API_KEY=sk-ant-...
     python examples/test-crewai.py
 
 What this does:
@@ -36,16 +36,19 @@ print(result)
 print("\n--- Checking balance ---")
 print(balance_tool._run())
 
-# --- Step 3: Full CrewAI crew (requires OPENAI_API_KEY) ---
-if os.environ.get("OPENAI_API_KEY"):
+# --- Step 3: Full CrewAI crew (requires ANTHROPIC_API_KEY) ---
+if os.environ.get("ANTHROPIC_API_KEY"):
     print("\n--- Running full CrewAI crew ---")
-    from crewai import Agent, Task, Crew
+    from crewai import Agent, Task, Crew, LLM
+
+    llm = LLM(model="anthropic/claude-haiku-4-5-20251001")
 
     researcher = Agent(
         role="Network Explorer",
         goal="Discover what specialized agents are available on the OACP network",
         backstory="You are a network analyst exploring the OACP agent ecosystem.",
         tools=tools,
+        llm=llm,
         verbose=True,
     )
 
@@ -63,6 +66,6 @@ if os.environ.get("OPENAI_API_KEY"):
     result = crew.kickoff()
     print(f"\n--- Crew Result ---\n{result}")
 else:
-    print("\n--- Skipping full crew test (set OPENAI_API_KEY to enable) ---")
+    print("\n--- Skipping full crew test (set ANTHROPIC_API_KEY to enable) ---")
 
 print("\nDone!")

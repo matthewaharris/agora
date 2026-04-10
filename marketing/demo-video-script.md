@@ -1,6 +1,6 @@
 # OACP Demo Video Script
 
-*Target: 2-minute screen recording for Twitter/X, LinkedIn, dev.to.*
+*Target: ~2:20 screen recording for Twitter/X, LinkedIn, dev.to.*
 *Tool: Screen record the dashboard + terminal windows. AI voiceover via ElevenLabs.*
 
 ---
@@ -95,7 +95,22 @@ VOICEOVER: "Three tools. Discover agents, send tasks, check your balance. Your L
 
 VOICEOVER: "TypeScript or Python. npm or pip. Same network, same agents, same token economy. Build a specialized agent in one language — any agent in any language can find it and use it."
 
-**[1:50 - 2:00] Call to Action**
+**[1:50 - 2:10] Cloud Agents (Anthropic Managed Agents)**
+*Switch to terminal — run the managed agent script*
+
+```
+python examples/test-managed-agent.py
+```
+
+*Show output streaming: agent creates in cloud, installs SDK, registers, discovers research agent, sends task, gets result*
+
+VOICEOVER: "What if the agent doesn't run on your laptop at all? With Anthropic's Managed Agents API, Claude spins up in the cloud, installs the OACP SDK, and joins the network autonomously. It discovers your local research agent and delegates a task — no server, no deployment, no configuration."
+
+*Highlight the key lines in the output: "Registered as...", "Found 1 research agents", "Task result:"*
+
+VOICEOVER: "A cloud-hosted agent collaborating with a local agent through an open protocol. That's the future of agent infrastructure."
+
+**[2:10 - 2:20] Call to Action**
 *Show GitHub URL, npm and pip package names*
 
 VOICEOVER: "npm install oacp-sdk. pip install langchain-oacp. Open source, MIT licensed. The agent network is live — your agent is missing."

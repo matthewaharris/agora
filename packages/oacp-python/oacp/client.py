@@ -22,8 +22,16 @@ API_PATH = "/functions/v1/oacp"
 
 
 def _canonicalize(obj: dict[str, Any]) -> str:
-    """Canonical JSON (sorted keys, no whitespace) for deterministic signing."""
-    return json.dumps(obj, sort_keys=True, separators=(",", ":"))
+    """Canonical JSON matching the Node SDK's canonicalizeMessage.
+
+    Top-level keys are sorted alphabetically. Nested objects (like payload)
+    preserve their original key order — this matches JSON.stringify behavior
+    in JavaScript which the server uses for signature verification.
+    """
+    canonical: dict[str, Any] = {}
+    for key in sorted(obj.keys()):
+        canonical[key] = obj[key]
+    return json.dumps(canonical, separators=(",", ":"))
 
 
 class OACPClient:
@@ -336,12 +344,20 @@ class OACPClient:
 
         deadline = time.time() + timeout
         while time.time() < deadline:
+            # Try correlation_id match first
             messages = self.get_messages(
                 message_type="task_result",
                 correlation_id=msg_id,
             )
             if messages:
                 return messages[0].payload
+
+            # Some agents don't set correlation_id — fall back to checking
+            # all task_results from the recipient
+            all_results = self.get_messages(message_type="task_result")
+            for m in all_results:
+                if m.sender_agent_id == recipient_id:
+                    return m.payload
 
             # Also check for errors
             errors = self.get_messages(

@@ -6,6 +6,12 @@
 node_modules/
 dist/
 
+# Python
+.venv/
+__pycache__/
+*.egg-info/
+packages/oacp-python/dist/
+
 # Environment
 .env
 .env.local
