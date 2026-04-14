@@ -77,5 +77,5 @@ export interface AgentConfig {
   apiBaseUrl?: string;
 }
 
-export const DEFAULT_HEARTBEAT_INTERVAL_MS = 30_000;
+export const DEFAULT_HEARTBEAT_INTERVAL_MS = 60_000;
 export const DEFAULT_KEYPAIR_PATH = './oacp-keypair.json';

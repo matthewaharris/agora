@@ -131,7 +131,7 @@ const agent = new OACPAgent({
   supabaseUrl: SUPABASE_URL,
   supabaseAnonKey: SUPABASE_ANON_KEY,
   keypairPath: './.oacp-keypair.json',
-  heartbeatIntervalMs: 30_000,
+  heartbeatIntervalMs: 60_000,
   actionSpecs: [directoryAction],
   trustPolicy: { allowedSenders: 'open' },
   model: { provider: 'local', name: 'concierge-v1', modalities: ['text'] },
@@ -226,8 +226,8 @@ async function main() {
   console.log(`📋 Found ${initial.total} agent(s) currently online`);
   initialScanDone = true;
 
-  // Check for new agents every 15 seconds
-  welcomeCheckInterval = setInterval(checkForNewAgents, 15_000);
+  // Check for new agents every 2 minutes (balances responsiveness vs DB I/O)
+  welcomeCheckInterval = setInterval(checkForNewAgents, 120_000);
 
   console.log('\n⏳ Watching for new agents... (Ctrl+C to stop)\n');
   console.log('   I\'ll send a welcome message to every new agent that joins.');
