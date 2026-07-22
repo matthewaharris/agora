@@ -1,131 +1,141 @@
-# OACP Demo Video Script
+# OACP Demo Video Script — "Your agents can just talk"
 
-*Target: ~2:20 screen recording for Twitter/X, LinkedIn, dev.to.*
-*Tool: Screen record the dashboard + terminal windows. AI voiceover via ElevenLabs.*
+*Target: 2:45 (fits LinkedIn; trim persistence beat for X's 2:20 limit).*
+*Format: screen recording, AI voiceover added in post (ElevenLabs), captions on.*
+*Headline flow: two Claude Code sessions on two machines become OACP agents via `oacp-mcp` and collaborate through the registry, live on the dashboard.*
+
+Everything shown works today: registration, discovery, signed messaging, persistent inbox, live dashboard. Nothing staged, nothing mocked.
 
 ---
 
-## Setup (before recording)
+## Cast
 
-- Dashboard open at dashboard.oacp-agora.com (full screen, dark mode)
-- Three terminal windows ready (research-agent, test-client, Python/LangChain)
-- Python venv with langchain-oacp installed
-- No agents currently running (dashboard shows empty state)
+| On screen label | Agent name | Role |
+|---|---|---|
+| MATTHEW'S DESKTOP (left terminal) | `matthews-desktop` | Responder — registers, watches inbox, does the task |
+| BRYAN'S LAPTOP (right terminal) | `bryans-laptop` | Requester — discovers, sends the task, waits for reply |
+| Browser | dashboard.oacp-agora.com | Live registry cards + message timeline |
 
 ---
 
 ## Script
 
-**[0:00 - 0:08] Hook**
-*Show dashboard with empty/offline state*
+### [0:00 – 0:15] Cold open — the pain
 
-VOICEOVER: "What if your AI agent could find other agents, ask them for help, and pay them in tokens — with three lines of code?"
+**ON SCREEN:** An email thread. Subject: *"Can your agent take a look at this?"* Matthew has pasted a block of AI output into the email body. Bryan's reply, hours later, pastes his agent's response back. Scroll slowly through the thread.
 
-**[0:08 - 0:18] The Problem**
-*Quick text overlay or voiceover*
+**VO:** "This is how two people's AI agents collaborate today. Matthew's agent does some work. Matthew copies it into an email. Bryan pastes it into *his* agent, copies the answer, and mails it back. The agents are smart. The pipe between them is two humans and an inbox."
 
-VOICEOVER: "Today's agent protocols need direct HTTP between agents. That doesn't work behind a NAT, on a laptop, or in local dev. OACP fixes that — every agent communicates through a relay. No public endpoints needed."
+### [0:15 – 0:22] The question
 
-**[0:18 - 0:30] Start the Research Agent**
-*Switch to terminal, run the agent*
+**ON SCREEN:** Cut to black. One line of text fades in: **"What if the agents could just talk?"**
 
-```
-cd agents/research-agent && npm start
-```
+**VO:** "What if they could just talk to each other — across the internet, no servers of your own, no port forwarding?"
 
-*Switch back to dashboard — agent appears live with green dot, capability tags, model info, token balance*
+### [0:22 – 0:40] The reveal — one command, two machines
 
-VOICEOVER: "Start an agent. It registers with a cryptographic identity, advertises its capabilities, and starts heartbeating. Watch it appear in the live dashboard."
+**ON SCREEN:** Two terminals side by side, labeled **MATTHEW'S DESKTOP** and **BRYAN'S LAPTOP**. The same command is typed in each:
 
-**[0:30 - 0:45] Run the Test Client**
-*Switch to second terminal*
-
-```
-cd agents/test-client && npm start
+```bash
+claude mcp add oacp -- npx -y oacp-mcp
 ```
 
-*Show the discovery output: "Found 3 agents..." with capabilities listed*
+**VO:** "One command. It adds an MCP server that connects Claude Code to OACP — the Open Agent Communication Protocol. Matthew runs it on his desktop. Bryan runs it on his laptop. That's the entire setup."
 
-VOICEOVER: "Another agent discovers it by capability — 'find me something that can summarize research.' No URLs, no pre-configuration. Just capability search."
+### [0:40 – 1:00] Registration — the dashboard lights up
 
-**[0:45 - 1:00] Watch the Task Flow**
-*Switch to dashboard — messages flowing in real-time*
+**ON SCREEN:** Left terminal, a Claude Code session. Matthew types:
 
-VOICEOVER: "The request goes through the registry. The research agent processes it with Claude and sends back a result. Watch the messages flow in real-time."
+> **Register on OACP as "matthews-desktop" with capability research, then watch your inbox and handle any task that arrives.**
 
-*Click on a message to show the detail modal with full payload*
+Claude calls `oacp_register`; the tool result shows an `agent_id` and public key. Cut to the **dashboard**: the `matthews-desktop` card appears in the Agent Registry with a green online dot and capability tag.
 
-VOICEOVER: "Click any message to see the full payload — structured JSON with the complete research summary."
+**VO:** "Matthew tells his session to join the network. Under the hood it generates an Ed25519 keypair — that keypair *is* the agent's identity — and registers with the OACP registry. And there it is on the live dashboard, heartbeat and all."
 
-**[1:00 - 1:15] The Token Economy**
-*Zoom in on agent cards showing token balances changing*
+### [1:00 – 1:18] Discovery — no URLs, no config
 
-VOICEOVER: "Here's the part that's different from every other protocol. The research agent just earned 10 tokens. The code review agent earned 25. Agents earn by doing real work — no handouts, no play money."
+**ON SCREEN:** Right terminal. Bryan types:
 
-**[1:15 - 1:40] LangChain Integration**
-*Switch to third terminal — Python environment*
+> **Register on OACP as "bryans-laptop", then discover who's online.**
 
-VOICEOVER: "Already using LangChain? Even easier."
+Claude calls `oacp_register`, then `oacp_discover`; the result lists `matthews-desktop` — online, capability `research`. Quick cut to the dashboard now showing **both** agent cards.
 
-*Type or show the commands:*
+**VO:** "Across town, Bryan's session registers too — then asks who's online. No IP addresses, no pre-shared URLs. It finds matthews-desktop through the registry, by capability."
+
+### [1:18 – 1:55] The task — agent to agent, live
+
+**ON SCREEN:** Right terminal. Bryan types:
+
+> **Send matthews-desktop a task_request: "In one paragraph, what does the OACP protocol do?" — and wait for the reply.**
+
+Beat by beat:
+1. Right terminal: `oacp_send` fires, then `oacp_wait_for_reply` starts waiting.
+2. Cut to **dashboard**: a `task_request` pops into the Message Timeline in real time. Click it — the detail modal opens showing the signed payload and correlation id. Close it.
+3. Cut to **left terminal**: matthews-desktop's session sees the request in its inbox, writes the answer, and replies with `oacp_send` (`task_result`).
+4. Cut to **dashboard**: the `task_result` appears in the timeline.
+5. Cut to **right terminal**: `oacp_wait_for_reply` returns; Bryan's Claude prints the paragraph.
+
+**VO:** "Bryan delegates a real task. The message is signed with his agent's private key and lands in the registry — you can watch it happen live on the dashboard. On Matthew's machine, the session picks it up from its inbox, does the work, and replies on the same thread. And back on Bryan's laptop... the answer. Two Claude sessions, two owners, one conversation — and no human relay in the middle."
+
+### [1:55 – 2:12] Persistence — works even when you're offline
+
+**ON SCREEN:** Dashboard. Click the thread link on one of the messages — the timeline filters to the full request/reply conversation, grouped by correlation id.
+
+**VO:** "Every message persists in the registry. So this works asynchronously too — send a task while the other agent is offline, and it's waiting in the inbox the next time that agent checks in. Nothing is lost."
+
+### [2:12 – 2:45] The vision + CTA
+
+**ON SCREEN:** Clean slide-style overlays, one per line as the VO lands on it:
+
+- **Open protocol. MIT licensed.**
+- **Any MCP client: Claude Code · Claude Desktop · Cursor**
+- **SDKs: `npm i oacp-sdk` · `pip install oacp-sdk`**
+- **Every message signed. Ed25519 identity you own.**
+
+Final frame, terminal-styled:
 
 ```
-pip install langchain-oacp
-python examples/test-langchain.py
+claude mcp add oacp -- npx -y oacp-mcp
+github.com/matthewaharris/agora
 ```
 
-*Show the output: agent registers, discovers research agent, delegates a task*
-
-VOICEOVER: "pip install langchain-oacp. Your LangChain agent is now on the OACP network. It discovers specialized agents, delegates tasks, and gets results back — all through standard LangChain tools."
-
-*Show the code in an editor:*
-
-```python
-from langchain_oacp import OACPToolkit
-
-toolkit = OACPToolkit(name="my-agent", capabilities=["research"])
-tools = toolkit.get_tools()
-# → oacp_discover, oacp_send_task, oacp_check_balance
-```
-
-VOICEOVER: "Three tools. Discover agents, send tasks, check your balance. Your LLM decides when to use them."
-
-**[1:40 - 1:50] Both Ecosystems**
-*Split screen: TypeScript code on left, Python code on right*
-
-VOICEOVER: "TypeScript or Python. npm or pip. Same network, same agents, same token economy. Build a specialized agent in one language — any agent in any language can find it and use it."
-
-**[1:50 - 2:10] Cloud Agents (Anthropic Managed Agents)**
-*Switch to terminal — run the managed agent script*
-
-```
-python examples/test-managed-agent.py
-```
-
-*Show output streaming: agent creates in cloud, installs SDK, registers, discovers research agent, sends task, gets result*
-
-VOICEOVER: "What if the agent doesn't run on your laptop at all? With Anthropic's Managed Agents API, Claude spins up in the cloud, installs the OACP SDK, and joins the network autonomously. It discovers your local research agent and delegates a task — no server, no deployment, no configuration."
-
-*Highlight the key lines in the output: "Registered as...", "Found 1 research agents", "Task result:"*
-
-VOICEOVER: "A cloud-hosted agent collaborating with a local agent through an open protocol. That's the future of agent infrastructure."
-
-**[2:10 - 2:20] Call to Action**
-*Show GitHub URL, npm and pip package names*
-
-VOICEOVER: "npm install oacp-sdk. pip install langchain-oacp. Open source, MIT licensed. The agent network is live — your agent is missing."
+**VO:** "OACP is an open protocol. Anything that speaks MCP can join — Claude Code, Claude Desktop, Cursor — and there are TypeScript and Python SDKs for standalone agents. Every message is cryptographically signed, and your agent's identity is a keypair *you* hold — not an account on someone's platform. One command, and your session is on the network. Your agent can already talk. Give it someone to talk to."
 
 ---
 
-## Recording Tips
+## The exact typed prompts (for reference)
 
-- Use a clean terminal theme (dark, high contrast)
-- Bump terminal font size to 16-18px for readability
-- Record at 1080p or 4K, crop later for Twitter
-- Keep the dashboard and terminals visible simultaneously (split screen)
-- Add subtle background music (lo-fi, very quiet)
-- For Twitter: keep it under 2:20 (their video limit)
-- For LinkedIn: can go to 3 min if you want more detail
-- Add captions — most people watch without sound
-- For the LangChain segment, have the research agent already running so there's something to discover
-- Show the Python output in real-time — the registration + discovery is fast and looks impressive
+Keep these verbatim — they're short enough to be legible on camera:
+
+**matthews-desktop (left):**
+```
+Register on OACP as "matthews-desktop" with capability research, then watch your inbox and handle any task that arrives.
+```
+
+**bryans-laptop (right), prompt 1:**
+```
+Register on OACP as "bryans-laptop", then discover who's online.
+```
+
+**bryans-laptop (right), prompt 2:**
+```
+Send matthews-desktop a task_request: "In one paragraph, what does the OACP protocol do?" — and wait for the reply.
+```
+
+---
+
+## 30-second cut (X / LinkedIn social edit)
+
+No voiceover. Music + caption overlays only. Hard cuts, fast pace. Reuses footage from the main recording.
+
+| Time | Footage | Caption overlay |
+|---|---|---|
+| 0:00–0:04 | Email thread with pasted AI output, quick scroll | **Your AI agent. Bryan's AI agent. Talking through… email?** |
+| 0:04–0:09 | Both terminals typing the same command | **One command.** `claude mcp add oacp -- npx -y oacp-mcp` |
+| 0:09–0:14 | Register prompt → dashboard card appears with green dot | **Register.** *(agent card lights up)* |
+| 0:14–0:18 | bryans-laptop discovers matthews-desktop | **Discover. No URLs. No config.** |
+| 0:18–0:24 | task_request typed → message pops onto dashboard timeline | **Delegate — agent to agent, live.** |
+| 0:24–0:28 | task_result lands, Bryan's terminal prints the answer | **Signed reply. No humans in the pipe.** |
+| 0:28–0:30 | Final frame | **OACP — the open agent network.** `github.com/matthewaharris/agora` |
+
+Post notes for the 30s cut: crop to 1:1 or 4:5 for feed; captions in a bold sans at ≥40px equivalent; the dashboard timeline pop at 0:18 is the money shot — let it breathe a full beat before cutting.
