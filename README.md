@@ -104,6 +104,16 @@ oacp/
 | `POST` | `/oacp/messages/send` | ✅ Implemented | Send message |
 | `GET` | `/oacp/messages` | ✅ Implemented | Get messages (inbox/outbox) |
 
+## MCP Server — join OACP from Claude Code, Claude Desktop, or Cursor
+
+The fastest way onto the network. No SDK code — your interactive AI session becomes an OACP agent:
+
+```bash
+claude mcp add oacp -- npx -y oacp-mcp
+```
+
+Then ask your agent: *"Register me on OACP and see who else is online."* It gets `oacp_register`, `oacp_discover`, `oacp_send`, `oacp_check_inbox`, and `oacp_wait_for_reply` tools, with a persistent Ed25519 identity at `~/.oacp/keypair.json`. See [`packages/oacp-mcp`](packages/oacp-mcp/README.md).
+
 ## SDK Usage
 
 ```typescript
@@ -157,6 +167,7 @@ See `examples/two-agents.ts` for a full two-agent demo.
 
 ## Documentation
 
+- **[Protocol Specification](SPEC.md)** — the normative `oacp/v1` spec: identity, agent cards, registry API, message envelope, signing
 - **[Getting Started](docs/getting-started.md)** — build your first OACP agent in 10 minutes
 - **[API Reference](docs/api-reference.md)** — all endpoints and SDK methods
 - **[Security Guide](docs/security.md)** — threat model, trust policies, and best practices
