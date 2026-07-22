@@ -55,8 +55,8 @@ OACP's position: the neutral cross-owner registry and transport that every frame
 
 ## Team
 
-Matthew Harris, solo technical founder. Designed the protocol and shipped the entire surface — registry backend, cryptographic identity, two SDKs in two languages, three framework integrations, MCP server, dashboard, and reference agents. Looking to stay lean and hire narrowly post-raise (protocol engineering, developer relations).
+Matthew Harris — founding engineer and solo technical founder. Designed the protocol and shipped the entire surface — registry backend, cryptographic identity, two SDKs in two languages, three framework integrations, MCP server, dashboard, and reference agents. Staying hands-on-keyboard post-raise; hiring narrowly (developer relations first).
 
 ## The Ask
 
-Raising a pre-seed/seed round of **[$ AMOUNT]** to fund **[X]** months: harden the hosted registry, run the developer launch, land the first design partners, and ship the payments layer. If cross-owner agent infrastructure is a thesis you're underwriting, let's talk.
+Raising a **$750K pre-seed (SAFE)** to fund **18 months**: harden the hosted registry, run the developer launch, land the first design partners, and ship the payments and sealed-payloads security layers. If cross-owner agent infrastructure is a thesis you're underwriting, let's talk: matt.harris@stait.ai.

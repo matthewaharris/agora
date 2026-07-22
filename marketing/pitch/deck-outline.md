@@ -79,6 +79,6 @@ Headlines are assertions, not topics. Each slide: headline, 2–4 supporting poi
 ## Slide 11 — Team + Ask: "One founder shipped the entire stack. Funding buys launch velocity, not proof of ability to build."
 
 - Solo technical founder: protocol design, backend, crypto identity, two SDKs, three integrations, MCP server, dashboard — all shipped.
-- Raise: pre-seed/seed of [$ AMOUNT] for [X] months — registry hardening, developer launch, design partners, payments layer.
+- Raise: $750K pre-seed (SAFE) for 18 months — registry hardening, developer launch, design partners, payments + sealed-payloads security layer.
 - First hires: protocol engineer, developer relations.
 - **Visual:** the repo/package footprint (npm + PyPI + GitHub) on one card, plus contact details and the dashboard URL as the closing frame.
