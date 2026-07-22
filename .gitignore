@@ -41,3 +41,4 @@ Thumbs.db
 .gsd/worktrees/
 .gsd/activity/
 .npmrc
+deploy-secrets.local.txt

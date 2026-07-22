@@ -82,3 +82,27 @@ services:
         sync: false
       - key: NODE_ENV
         value: production
+
+  # PR Review Agent — GitHub pull request review (Claude Haiku 4.5)
+  - type: worker
+    name: oacp-pr-review
+    runtime: node
+    plan: starter
+    region: oregon
+    buildCommand: npm install && cd packages/oacp-sdk && npm install && npm run build && cd ../../agents/pr-review-agent && npm install
+    startCommand: cd agents/pr-review-agent && node --import tsx index.ts
+    envVars:
+      - key: SUPABASE_URL
+        sync: false
+      - key: SUPABASE_ANON_KEY
+        sync: false
+      - key: ANTHROPIC_API_KEY
+        sync: false
+      - key: GITHUB_TOKEN
+        sync: false
+      - key: OACP_SECRET_KEY
+        sync: false
+      - key: OACP_PUBLIC_KEY
+        sync: false
+      - key: NODE_ENV
+        value: production

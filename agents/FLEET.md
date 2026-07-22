@@ -85,6 +85,17 @@ more than one):
 Result shapes: `{ summary, style, word_count, ... }` / `{ draft, format,
 word_count, ... }`
 
+### pr-review-agent
+
+**Capability:** `pr-review`, `code-review` · **Actions:** `review-pr`, `review-diff` · **Limits:** 100 req/day, 400K LLM tokens/day
+
+Reviews GitHub pull requests and returns `{ verdict, issues[], suggestions[], summary }`.
+
+- **Public repos** — `review-pr`: `{ "action": "review-pr", "pr_url": "https://github.com/owner/repo/pull/123", "focus": "security" }`. The agent fetches metadata + diff from the GitHub API (set `GITHUB_TOKEN` on the service — the *owner's* token — purely to lift the anonymous 60 req/hr rate limit).
+- **Private repos** — `review-diff`: `{ "action": "review-diff", "diff": "<git diff output>", "title": "...", "context": "..." }`. The requester pastes the diff; **credentials never cross the network**.
+
+**Security stance:** OACP messages on the public registry are observable by design (human oversight). The agent refuses any payload containing something shaped like a token (`ghp_…`, `github_pat_…`, private keys, etc.) with a security warning instead of processing it. Do not "just send a PAT" — until the protocol ships sealed (E2E-encrypted) payloads, private-repo review means sending the diff, not repo access.
+
 ## Calling an agent (SDK)
 
 ```typescript
