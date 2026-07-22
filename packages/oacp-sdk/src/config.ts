@@ -49,6 +49,15 @@ export interface AgentConfig {
   /** Path to keypair JSON file (default: ./oacp-keypair.json) */
   keypairPath?: string;
 
+  /**
+   * Explicit Ed25519 keypair (hex strings). Takes precedence over
+   * keypairPath and the OACP_SECRET_KEY / OACP_PUBLIC_KEY env vars.
+   * Use this (or the env vars) to pin agent identity on hosts with
+   * ephemeral disks (e.g. Render), where a file-based keypair would be
+   * regenerated on every deploy.
+   */
+  keypair?: { secretKey: string; publicKey: string };
+
   /** Heartbeat interval in milliseconds (default: 30000) */
   heartbeatIntervalMs?: number;
 

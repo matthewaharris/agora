@@ -128,6 +128,62 @@ export function verifySignature(
 // Keypair persistence
 // ============================================================
 
+const HEX_KEY_RE = /^[0-9a-fA-F]{64}$/;
+
+/** Validate that both halves of a keypair are 32-byte hex strings. */
+export function isValidKeypair(keypair: Partial<OACPKeypair> | null | undefined): keypair is OACPKeypair {
+  return (
+    !!keypair &&
+    typeof keypair.secretKey === 'string' &&
+    typeof keypair.publicKey === 'string' &&
+    HEX_KEY_RE.test(keypair.secretKey) &&
+    HEX_KEY_RE.test(keypair.publicKey)
+  );
+}
+
+/**
+ * Resolve the agent's keypair, in order of precedence:
+ *
+ * 1. An explicit keypair passed in config (`config.keypair`)
+ * 2. OACP_SECRET_KEY / OACP_PUBLIC_KEY environment variables
+ * 3. A keypair file at `filePath` (created if missing)
+ *
+ * Options 1 and 2 pin the agent's identity on hosts with ephemeral disks
+ * (e.g. Render workers), where a file-based keypair would be regenerated
+ * on every deploy and the agent would lose its registry identity.
+ *
+ * Invalid explicit/env keys throw rather than silently generating a new
+ * identity — a silent fallback would orphan the agent's registration.
+ */
+export function resolveKeypair(
+  explicit: OACPKeypair | undefined,
+  filePath: string,
+): OACPKeypair {
+  if (explicit) {
+    if (!isValidKeypair(explicit)) {
+      throw new Error(
+        '[OACP] Invalid keypair in config: secretKey and publicKey must each be 64 hex chars (32 bytes)',
+      );
+    }
+    return explicit;
+  }
+
+  const envSecret = typeof process !== 'undefined' ? process.env?.OACP_SECRET_KEY : undefined;
+  const envPublic = typeof process !== 'undefined' ? process.env?.OACP_PUBLIC_KEY : undefined;
+  if (envSecret || envPublic) {
+    const envPair = { secretKey: envSecret ?? '', publicKey: envPublic ?? '' };
+    if (!isValidKeypair(envPair)) {
+      throw new Error(
+        '[OACP] Invalid OACP_SECRET_KEY / OACP_PUBLIC_KEY environment variables: both must be set to 64-char hex strings',
+      );
+    }
+    console.log('[OACP] Using keypair from OACP_SECRET_KEY / OACP_PUBLIC_KEY environment variables');
+    return envPair;
+  }
+
+  return loadOrCreateKeypair(filePath);
+}
+
 /**
  * Load a keypair from a JSON file, or generate a new one and save it.
  *

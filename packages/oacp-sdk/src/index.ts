@@ -23,7 +23,7 @@
  * ```
  */
 
-export const VERSION = '0.1.0';
+export const VERSION = '0.3.0';
 
 // Main agent class
 export { OACPAgent } from './agent.js';
@@ -44,6 +44,8 @@ export {
   verifySignature,
   canonicalizeMessage,
   loadOrCreateKeypair,
+  resolveKeypair,
+  isValidKeypair,
   toHex,
   fromHex,
   type OACPKeypair,

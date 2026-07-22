@@ -125,7 +125,8 @@ export type MessageType =
   | 'task_request'
   | 'task_ack'
   | 'task_result'
-  | 'task_error';
+  | 'task_error'
+  | 'chat';
 
 export interface MessageEnvelope {
   message_id: string;

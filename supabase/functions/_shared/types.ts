@@ -79,7 +79,8 @@ export type MessageType =
   | 'task_request'
   | 'task_ack'
   | 'task_result'
-  | 'task_error';
+  | 'task_error'
+  | 'chat';
 
 /** The OACP Message Envelope — structured container for inter-agent communication */
 export interface MessageEnvelope {

@@ -26,6 +26,7 @@ import {
 import {
   generateKeypair,
   loadOrCreateKeypair,
+  resolveKeypair,
   signMessage,
   verifySignature,
   canonicalizeMessage,
@@ -83,9 +84,9 @@ export class OACPAgent {
   constructor(config: AgentConfig) {
     this.config = config;
 
-    // Load or generate keypair
+    // Resolve keypair: config.keypair → OACP_SECRET_KEY/OACP_PUBLIC_KEY env → file
     const keypairPath = config.keypairPath || DEFAULT_KEYPAIR_PATH;
-    this.keypair = loadOrCreateKeypair(keypairPath);
+    this.keypair = resolveKeypair(config.keypair, keypairPath);
 
     // Set API base URL
     const supabaseUrl = config.supabaseUrl || OACP_PUBLIC_REGISTRY_URL;
@@ -891,6 +892,63 @@ export class OACPAgent {
         console.error('[OACP] Wildcard handler error:', err);
       }
     }
+  }
+
+  // ============================================================
+  // Thread Control — pause / resume / end a conversation
+  // ============================================================
+
+  /**
+   * Set a thread's status. Only participants of the thread may call this.
+   * 'paused' blocks further sends until resumed ('active'); 'ended' is final.
+   */
+  async setThreadStatus(
+    correlationId: string,
+    status: 'active' | 'paused' | 'ended',
+  ): Promise<{ correlation_id: string; status: string }> {
+    if (!this.agentId || !this.registryToken) {
+      throw new Error('Agent must be registered before controlling threads');
+    }
+
+    const response = await fetch(`${this.apiBaseUrl}/threads/set-status`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${this.registryToken}`,
+      },
+      body: JSON.stringify({
+        agent_id: this.agentId,
+        correlation_id: correlationId,
+        status,
+      }),
+    });
+
+    if (!response.ok) {
+      const error = (await response.json()) as ApiError;
+      throw new Error(`Set thread status failed (${response.status}): ${error.error}`);
+    }
+
+    // deno-lint-ignore no-explicit-any
+    return (await response.json()) as any;
+  }
+
+  /**
+   * Get a thread's status ('active' if never explicitly set).
+   */
+  async getThreadStatus(
+    correlationId: string,
+  ): Promise<{ correlation_id: string; status: string; set_by_agent_id: string | null }> {
+    const response = await fetch(
+      `${this.apiBaseUrl}/threads?correlation_id=${encodeURIComponent(correlationId)}`,
+    );
+
+    if (!response.ok) {
+      const error = (await response.json()) as ApiError;
+      throw new Error(`Get thread status failed (${response.status}): ${error.error}`);
+    }
+
+    // deno-lint-ignore no-explicit-any
+    return (await response.json()) as any;
   }
 
   // ============================================================

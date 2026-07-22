@@ -533,7 +533,7 @@ async function handleMessageSend(req: Request): Promise<Response> {
   }
 
   // Validate message_type
-  const validTypes = ['task_request', 'task_ack', 'task_result', 'task_error'];
+  const validTypes = ['task_request', 'task_ack', 'task_result', 'task_error', 'chat'];
   if (!validTypes.includes(body.message_type as string)) {
     return errorResponse(
       `message_type must be one of: ${validTypes.join(', ')}`,
@@ -592,6 +592,23 @@ async function handleMessageSend(req: Request): Promise<Response> {
 
   if (recipientError || !recipient) {
     return errorResponse('Recipient agent not found', 404);
+  }
+
+  // Thread control: reject sends on paused/ended threads
+  if (body.correlation_id) {
+    const { data: threadState } = await supabase
+      .from('thread_states')
+      .select('status')
+      .eq('correlation_id', body.correlation_id as string)
+      .maybeSingle();
+
+    if (threadState && threadState.status !== 'active') {
+      return errorResponse(
+        `Thread is ${threadState.status} — no further messages can be sent on this correlation_id`,
+        403,
+        { error_code: `thread_${threadState.status}`, correlation_id: body.correlation_id },
+      );
+    }
   }
 
   // Verify Ed25519 signature
@@ -1384,7 +1401,128 @@ function notImplemented(route: string): Response {
 // Router
 // ============================================================
 
+// ============================================================
+// Thread Control — pause / resume / end a conversation
+// ============================================================
+
+/**
+ * POST /threads/set-status
+ * Body: { agent_id, correlation_id, status: 'active' | 'paused' | 'ended' }
+ * Auth: Bearer registry token. Only a participant of the thread
+ * (sender or recipient of at least one message on it) may change status.
+ * An 'ended' thread is final — it cannot be reactivated.
+ */
+async function handleThreadSetStatus(req: Request): Promise<Response> {
+  // deno-lint-ignore no-explicit-any
+  let body: any;
+  try {
+    body = await req.json();
+  } catch {
+    return errorResponse('Invalid JSON body', 400);
+  }
+
+  const { agent_id: agentId, correlation_id: correlationId, status } = body;
+  if (!agentId || !correlationId || !status) {
+    return errorResponse('agent_id, correlation_id, and status are required', 400);
+  }
+  if (!['active', 'paused', 'ended'].includes(status)) {
+    return errorResponse("status must be 'active', 'paused', or 'ended'", 400);
+  }
+
+  const token = extractBearerToken(req);
+  if (!token) {
+    return errorResponse('Authorization header with Bearer token required', 401);
+  }
+
+  const supabase = getSupabaseAdmin();
+  const tokenHash = await hashToken(token);
+
+  const { data: agent, error: agentError } = await supabase
+    .from('agents')
+    .select('agent_id, registry_token, name')
+    .eq('agent_id', agentId)
+    .single();
+
+  if (agentError || !agent) return errorResponse('Agent not found', 404);
+  if (agent.registry_token !== tokenHash) return errorResponse('Invalid registry token', 403);
+
+  // Participant check: the agent must appear on at least one message of the thread
+  const { data: participation } = await supabase
+    .from('messages')
+    .select('message_id')
+    .eq('correlation_id', correlationId)
+    .or(`sender_agent_id.eq.${agentId},recipient_agent_id.eq.${agentId}`)
+    .limit(1);
+
+  if (!participation || participation.length === 0) {
+    return errorResponse('Thread not found, or agent is not a participant of this thread', 403, {
+      error_code: 'not_a_participant',
+    });
+  }
+
+  // Ended threads are final
+  const { data: existing } = await supabase
+    .from('thread_states')
+    .select('status')
+    .eq('correlation_id', correlationId)
+    .maybeSingle();
+
+  if (existing?.status === 'ended') {
+    return errorResponse('Thread has been ended and cannot be reactivated', 403, {
+      error_code: 'thread_ended',
+    });
+  }
+
+  const now = new Date().toISOString();
+  const { error: upsertError } = await supabase
+    .from('thread_states')
+    .upsert({
+      correlation_id: correlationId,
+      status,
+      set_by_agent_id: agentId,
+      updated_at: now,
+    });
+
+  if (upsertError) {
+    console.error('[OACP] Thread state upsert error:', upsertError);
+    return errorResponse('Failed to update thread status', 500);
+  }
+
+  console.log(`[OACP] Thread ${correlationId.substring(0, 8)}… set to ${status} by ${agent.name}`);
+  return jsonResponse({ correlation_id: correlationId, status, set_by_agent_id: agentId, updated_at: now });
+}
+
+/**
+ * GET /threads?correlation_id=<id>
+ * Public: returns the thread's status ('active' if never set).
+ */
+async function handleGetThreadStatus(req: Request): Promise<Response> {
+  const url = new URL(req.url);
+  const correlationId = url.searchParams.get('correlation_id');
+  if (!correlationId) return errorResponse('correlation_id query parameter is required', 400);
+
+  const supabase = getSupabaseAdmin();
+  const { data } = await supabase
+    .from('thread_states')
+    .select('status, set_by_agent_id, updated_at')
+    .eq('correlation_id', correlationId)
+    .maybeSingle();
+
+  return jsonResponse({
+    correlation_id: correlationId,
+    status: data?.status || 'active',
+    set_by_agent_id: data?.set_by_agent_id || null,
+    updated_at: data?.updated_at || null,
+  });
+}
+
 const routes: Record<string, Record<string, RouteHandler>> = {
+  '/threads/set-status': {
+    POST: (req) => handleThreadSetStatus(req),
+  },
+  '/threads': {
+    GET: (req) => handleGetThreadStatus(req),
+  },
   '/health': {
     GET: () => handleHealth(),
   },
