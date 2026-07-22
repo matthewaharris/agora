@@ -488,6 +488,94 @@
       border-bottom: 1px solid var(--border);
     }
 
+    /* ═══ THREAD GROUPS (timeline) ═══ */
+    .thread-group {
+      border-bottom: 1px solid var(--border);
+      background: rgba(129, 140, 248, 0.02);
+    }
+
+    .thread-group-header {
+      padding: 9px 18px;
+      display: flex;
+      align-items: center;
+      gap: 9px;
+      cursor: pointer;
+      user-select: none;
+      font-size: 12.5px;
+      background: rgba(129, 140, 248, 0.05);
+      border-bottom: 1px solid var(--border);
+      transition: background 0.15s;
+    }
+
+    .thread-group-header:hover { background: rgba(129, 140, 248, 0.09); }
+
+    .thread-group-header .chevron { font-size: 9px; color: var(--accent); transition: transform 0.2s; }
+    .thread-group-header .chevron.collapsed { transform: rotate(-90deg); }
+
+    .thread-group-header .parties { font-family: var(--font-display); font-weight: 600; }
+    .thread-group-header .parties .swap { color: var(--accent); font-weight: 400; }
+
+    .thread-group-header .thread-meta {
+      font-family: var(--font-mono);
+      font-size: 10.5px;
+      color: var(--text-faint);
+      margin-left: auto;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+
+    .thread-group .message-item {
+      padding-left: 34px;
+      position: relative;
+    }
+
+    /* connecting rail down the left of grouped messages */
+    .thread-group .message-item::before {
+      content: '';
+      position: absolute;
+      left: 22px;
+      top: 0;
+      bottom: 0;
+      width: 2px;
+      background: rgba(129, 140, 248, 0.22);
+    }
+
+    .thread-group .message-item:last-child { border-bottom: none; }
+    .thread-group.collapsed .thread-group-body { display: none; }
+
+    /* ═══ MODAL THREAD ITEMS ═══ */
+    .modal-thread-item {
+      padding: 8px 10px;
+      margin: 2px 0;
+      border-radius: 8px;
+      cursor: pointer;
+      color: var(--text-dim);
+      border: 1px solid transparent;
+      transition: background 0.15s, border-color 0.15s;
+    }
+
+    .modal-thread-item:hover { background: var(--surface-strong); border-color: var(--border-strong); }
+
+    .modal-thread-item.current {
+      color: var(--accent);
+      font-weight: 600;
+      background: rgba(129, 140, 248, 0.07);
+      border-color: rgba(129, 140, 248, 0.3);
+    }
+
+    .modal-thread-item .item-preview {
+      display: block;
+      font-family: var(--font-mono);
+      font-size: 11px;
+      color: var(--text-faint);
+      font-weight: 400;
+      margin-top: 3px;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
     /* ═══ MODALS ═══ */
     .modal-overlay {
       display: none;
@@ -1476,36 +1564,29 @@
         return;
       }
 
-      // Group by correlation_id for threading
-      const threadMap = new Map();
-      for (const m of messages) {
-        if (m.correlation_id) {
-          if (!threadMap.has(m.correlation_id)) threadMap.set(m.correlation_id, []);
-          threadMap.get(m.correlation_id).push(m);
-        }
+      // Group the filtered timeline into threads by correlation_id.
+      // `filtered` is newest-first, so thread groups are ordered by latest activity.
+      const groupOrder = [];
+      const byThread = new Map();
+      for (const m of filtered) {
+        const key = m.correlation_id || `solo-${m.message_id}`;
+        if (!byThread.has(key)) { byThread.set(key, []); groupOrder.push(key); }
+        byThread.get(key).push(m);
       }
 
-      container.innerHTML = filtered.map((msg, idx) => {
+      function msgItemHtml(msg) {
         const senderName = getAgentName(msg.sender_agent_id);
         const recipientName = getAgentName(msg.recipient_agent_id);
         const time = new Date(msg.created_at).toLocaleTimeString();
         const payloadStr = JSON.stringify(msg.payload || {}, null, 2);
         const payloadPreview = payloadStr.substring(0, 150) + (payloadStr.length > 150 ? '...' : '');
-
-        // Thread info
-        const thread = msg.correlation_id ? threadMap.get(msg.correlation_id) : null;
-        const threadSize = thread ? thread.length : 0;
         const isHighlighted = activeThreadFilter && msg.correlation_id === activeThreadFilter;
-        const threadLabel = msg.correlation_id
-          ? `<span class="msg-thread-id" onclick="filterThread('${msg.correlation_id}')" title="Click to show conversation thread">🔗 ${threadSize > 1 ? threadSize + ' msgs' : 'thread'} ${msg.correlation_id.substring(0, 8)}...</span>`
-          : '';
 
         return `
           <div class="message-item ${isHighlighted ? 'thread-highlight' : ''}" onclick="openMessageDetail('${msg.message_id}')">
             <div class="msg-header">
               <span class="msg-type ${msg.message_type}">${msg.message_type}</span>
               <span class="msg-time">${time}</span>
-              ${threadLabel}
             </div>
             <div class="msg-route">
               ${esc(senderName)} <span class="arrow">→</span> ${esc(recipientName)}
@@ -1513,7 +1594,50 @@
             <div class="msg-payload">${esc(payloadPreview)}</div>
           </div>
         `;
+      }
+
+      container.innerHTML = groupOrder.map((key) => {
+        const msgs = byThread.get(key);
+
+        // Singles (no correlation_id, or only one message on the thread) render flat
+        if (msgs.length === 1) return msgItemHtml(msgs[0]);
+
+        // Multi-message thread: header + chronological messages beneath
+        const ordered = msgs.slice().sort((a, b) => new Date(a.created_at) - new Date(b.created_at));
+        const first = ordered[0];
+        const partyA = getAgentName(first.sender_agent_id);
+        const partyB = getAgentName(first.recipient_agent_id);
+        const latest = timeAgo(new Date(ordered[ordered.length - 1].created_at));
+        const isCollapsed = collapsedThreads.has(key);
+        const tStatus = threadStates.get(key) || 'active';
+        const statusBadge = tStatus !== 'active'
+          ? `<span class="thread-status ${tStatus}">${tStatus === 'paused' ? '⏸ paused' : '⏹ ended'}</span>`
+          : '';
+
+        return `
+          <div class="thread-group ${isCollapsed ? 'collapsed' : ''}">
+            <div class="thread-group-header" onclick="toggleThreadGroup('${key}')">
+              <span class="chevron ${isCollapsed ? 'collapsed' : ''}">▼</span>
+              <span class="parties">${esc(partyA)} <span class="swap">⇄</span> ${esc(partyB)}</span>
+              ${statusBadge}
+              <span class="thread-meta">
+                <span>${ordered.length} messages</span>
+                <span>${latest}</span>
+                <span>🔗 ${key.substring(0, 8)}…</span>
+              </span>
+            </div>
+            <div class="thread-group-body">${ordered.map(msgItemHtml).join('')}</div>
+          </div>
+        `;
       }).join('');
+    }
+
+    const collapsedThreads = new Set();
+
+    function toggleThreadGroup(key) {
+      if (collapsedThreads.has(key)) collapsedThreads.delete(key);
+      else collapsedThreads.add(key);
+      renderMessages();
     }
 
     function clearFilters() {
@@ -1558,15 +1682,18 @@
         if (thread.length > 1) {
           threadHtml = `
             <div class="modal-thread">
-              <h3>🔗 Conversation Thread (${thread.length} messages)</h3>
+              <h3>🔗 Conversation Thread (${thread.length} messages) — click any message to view its payload</h3>
               ${thread.map(t => {
                 const tSender = getAgentName(t.sender_agent_id);
                 const tTime = new Date(t.created_at).toLocaleTimeString();
                 const isCurrent = t.message_id === messageId;
-                return `<div style="padding:6px 0;${isCurrent ? 'font-weight:600;color:var(--accent);' : 'color:var(--text-dim);'}">
+                const tPayload = JSON.stringify(t.payload || {});
+                const tPreview = tPayload.length > 90 ? tPayload.substring(0, 90) + '…' : tPayload;
+                return `<div class="modal-thread-item ${isCurrent ? 'current' : ''}" onclick="openMessageDetail('${t.message_id}')">
                   <span class="msg-type ${t.message_type}" style="font-size:10px">${t.message_type}</span>
                   ${tTime} — ${esc(tSender)}
                   ${isCurrent ? ' ← viewing' : ''}
+                  <span class="item-preview">${esc(tPreview)}</span>
                 </div>`;
               }).join('')}
             </div>
@@ -1938,7 +2065,11 @@
       setView('conversations');
       if (urlParams.get('thread')) activeConversation = urlParams.get('thread');
     }
-    connect();
+    connect().then(() => {
+      // ?msg=<message_id> deep-links straight to a message's detail modal
+      const msgId = urlParams.get('msg');
+      if (msgId) setTimeout(() => openMessageDetail(msgId), 400);
+    });
   </script>
 </body>
 </html>
