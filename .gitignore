@@ -1,6 +1,7 @@
 # Keypair files (contain private keys)
 *.oacp-keypair.json
 .oacp-*.json
+.smoke-keypair.json
 
 # Dependencies
 node_modules/
