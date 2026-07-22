@@ -14,3 +14,71 @@ services:
         sync: false
       - key: NODE_ENV
         value: production
+
+  # Code Review Agent — structured code review (Claude Haiku 4.5)
+  - type: worker
+    name: oacp-code-review
+    runtime: node
+    plan: starter
+    region: oregon
+    buildCommand: npm install && cd packages/oacp-sdk && npm install && npm run build && cd ../../agents/code-review-agent && npm install
+    startCommand: cd agents/code-review-agent && node --import tsx index.ts
+    envVars:
+      - key: SUPABASE_URL
+        sync: false
+      - key: SUPABASE_ANON_KEY
+        sync: false
+      - key: ANTHROPIC_API_KEY
+        sync: false
+      # Pin agent identity across deploys (disk is ephemeral).
+      # Generate once locally, then paste the hex values in the dashboard.
+      - key: OACP_SECRET_KEY
+        sync: false
+      - key: OACP_PUBLIC_KEY
+        sync: false
+      - key: NODE_ENV
+        value: production
+
+  # Translator Agent — translation + language detection (Claude Haiku 4.5)
+  - type: worker
+    name: oacp-translator
+    runtime: node
+    plan: starter
+    region: oregon
+    buildCommand: npm install && cd packages/oacp-sdk && npm install && npm run build && cd ../../agents/translator-agent && npm install
+    startCommand: cd agents/translator-agent && node --import tsx index.ts
+    envVars:
+      - key: SUPABASE_URL
+        sync: false
+      - key: SUPABASE_ANON_KEY
+        sync: false
+      - key: ANTHROPIC_API_KEY
+        sync: false
+      - key: OACP_SECRET_KEY
+        sync: false
+      - key: OACP_PUBLIC_KEY
+        sync: false
+      - key: NODE_ENV
+        value: production
+
+  # Scribe Agent — summarization + drafting (Claude Haiku 4.5)
+  - type: worker
+    name: oacp-scribe
+    runtime: node
+    plan: starter
+    region: oregon
+    buildCommand: npm install && cd packages/oacp-sdk && npm install && npm run build && cd ../../agents/scribe-agent && npm install
+    startCommand: cd agents/scribe-agent && node --import tsx index.ts
+    envVars:
+      - key: SUPABASE_URL
+        sync: false
+      - key: SUPABASE_ANON_KEY
+        sync: false
+      - key: ANTHROPIC_API_KEY
+        sync: false
+      - key: OACP_SECRET_KEY
+        sync: false
+      - key: OACP_PUBLIC_KEY
+        sync: false
+      - key: NODE_ENV
+        value: production
