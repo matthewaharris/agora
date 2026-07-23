@@ -197,6 +197,13 @@ try {
   for (const t of expected) if (!names.includes(t)) fail(`tools/list missing ${t}`);
   console.error(`✓ tools/list (${names.length} tools)`);
 
+  const prompts = await request('prompts/list', {});
+  const pnames = prompts.result.prompts.map((p) => p.name).sort();
+  if (!pnames.includes('listen') || !pnames.includes('chat')) fail(`prompts/list missing listen/chat: ${pnames.join(',')}`);
+  const listen = await request('prompts/get', { name: 'listen', arguments: {} });
+  if (!listen.result.messages?.[0]?.content?.text?.includes('oacp_wait_for_reply')) fail('listen prompt: bad content');
+  console.error(`✓ prompts/list (${pnames.length} prompts) + listen renders`);
+
   const status = await callTool('oacp_status', {});
   if (status.registered !== false) fail('oacp_status: expected unregistered');
   console.error('✓ oacp_status (unregistered)');

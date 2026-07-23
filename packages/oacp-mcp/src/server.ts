@@ -131,7 +131,7 @@ export function buildServer(): { server: McpServer; shutdown: () => Promise<void
     return agent;
   }
 
-  const server = new McpServer({ name: 'oacp', version: '0.2.0' });
+  const server = new McpServer({ name: 'oacp', version: '0.2.1' });
 
   // ----------------------------------------------------------
   // oacp_register
@@ -455,6 +455,70 @@ export function buildServer(): { server: McpServer; shutdown: () => Promise<void
         return errorResult(err instanceof Error ? err.message : String(err));
       }
     },
+  );
+
+  // ----------------------------------------------------------
+  // Prompts — surfaced as slash commands in MCP clients
+  // (Claude Code: /mcp__oacp__listen, /mcp__oacp__chat)
+  // ----------------------------------------------------------
+  server.registerPrompt(
+    'listen',
+    {
+      title: 'Listen for OACP messages',
+      description: 'Sit in a receive loop: wait for incoming OACP messages, surface each one to the human, and reply as directed.',
+      argsSchema: {},
+    },
+    () => ({
+      messages: [
+        {
+          role: 'user' as const,
+          content: {
+            type: 'text' as const,
+            text: [
+              'Act as my OACP inbox listener. Follow this loop until I say stop:',
+              '1. Ensure we are registered (oacp_status; oacp_register if needed).',
+              '2. First, oacp_check_inbox for anything that arrived while we were away — surface each unhandled message to me before continuing.',
+              '3. Then loop: call oacp_wait_for_reply with timeout_seconds: 55 and no correlation_id filter.',
+              '4. When a message arrives: show me who sent it (look up the sender with oacp_discover if unknown), the type, and the payload. For chat messages, draft a reply and CHECK WITH ME before sending it (oacp_send, same correlation_id). For task_requests, tell me what is being asked and ask whether to do it.',
+              '5. On timeout with no message, just continue the loop silently — do not narrate empty polls.',
+              '6. If I say "pause thread" or "end thread", use oacp_thread_control on that correlation_id.',
+              'Start now.',
+            ].join('\n'),
+          },
+        },
+      ],
+    }),
+  );
+
+  server.registerPrompt(
+    'chat',
+    {
+      title: 'Open a chat with another agent',
+      description: 'Find an agent by owner handle or name and start a supervised conversation with it.',
+      argsSchema: {
+        with_agent: z.string().describe("Who to chat with — an owner_handle (e.g. 'bryan'), agent name, or agent_id"),
+        opener: z.string().optional().describe('What the first message should say or be about'),
+      },
+    },
+    ({ with_agent, opener }) => ({
+      messages: [
+        {
+          role: 'user' as const,
+          content: {
+            type: 'text' as const,
+            text: [
+              `Open an OACP chat with the agent identified by "${with_agent}".`,
+              '1. Ensure we are registered (oacp_status; oacp_register if needed).',
+              `2. Find them: oacp_discover by owner_handle "${with_agent}" first; if no match, search by name/agent_id. If several match, ask me which.`,
+              `3. Send the first chat message (message_type "chat", payload {"text": ...})${opener ? ` — it should say: ${opener}` : ' — introduce yourself on my behalf and ask what they are working on'}. Note the correlation_id: that is our conversation thread.`,
+              '4. Then hold the conversation: oacp_wait_for_reply (same correlation_id, message_type "chat", timeout_seconds: 55, and looping on timeouts without narrating). When a reply arrives, show it to me, draft a response, and CHECK WITH ME before sending. Reuse the same correlation_id on every turn.',
+              '5. If I say "pause the thread" or "end the thread", use oacp_thread_control.',
+              'Start now.',
+            ].join('\n'),
+          },
+        },
+      ],
+    }),
   );
 
   const shutdown = async () => {
