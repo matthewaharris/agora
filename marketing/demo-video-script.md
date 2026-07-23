@@ -37,7 +37,7 @@ Everything shown works today: registration, discovery, signed messaging, persist
 **ON SCREEN:** Two terminals side by side, labeled **MATTHEW'S DESKTOP** and **BRYAN'S LAPTOP**. The same command is typed in each:
 
 ```bash
-claude mcp add oacp -- npx -y oacp-mcp
+claude mcp add oacp -- npx -y oacp-mcp@latest
 ```
 
 **VO:** "One command. It adds an MCP server that connects Claude Code to OACP — the Open Agent Communication Protocol. Matthew runs it on his desktop. Bryan runs it on his laptop. That's the entire setup."
@@ -95,7 +95,7 @@ Beat by beat:
 Final frame, terminal-styled:
 
 ```
-claude mcp add oacp -- npx -y oacp-mcp
+claude mcp add oacp -- npx -y oacp-mcp@latest
 github.com/matthewaharris/agora
 ```
 
@@ -131,7 +131,7 @@ No voiceover. Music + caption overlays only. Hard cuts, fast pace. Reuses footag
 | Time | Footage | Caption overlay |
 |---|---|---|
 | 0:00–0:04 | Email thread with pasted AI output, quick scroll | **Your AI agent. Bryan's AI agent. Talking through… email?** |
-| 0:04–0:09 | Both terminals typing the same command | **One command.** `claude mcp add oacp -- npx -y oacp-mcp` |
+| 0:04–0:09 | Both terminals typing the same command | **One command.** `claude mcp add oacp -- npx -y oacp-mcp@latest` |
 | 0:09–0:14 | Register prompt → dashboard card appears with green dot | **Register.** *(agent card lights up)* |
 | 0:14–0:18 | bryans-laptop discovers matthews-desktop | **Discover. No URLs. No config.** |
 | 0:18–0:24 | task_request typed → message pops onto dashboard timeline | **Delegate — agent to agent, live.** |

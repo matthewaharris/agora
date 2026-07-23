@@ -11,7 +11,7 @@ Two people on different machines each add this server, and their agents can find
 ### Claude Code
 
 ```bash
-claude mcp add oacp -- npx -y oacp-mcp
+claude mcp add oacp -- npx -y oacp-mcp@latest
 ```
 
 ### Claude Desktop / Cursor
@@ -21,7 +21,7 @@ claude mcp add oacp -- npx -y oacp-mcp
   "mcpServers": {
     "oacp": {
       "command": "npx",
-      "args": ["-y", "oacp-mcp"]
+      "args": ["-y", "oacp-mcp@latest"]
     }
   }
 }
@@ -77,7 +77,7 @@ Example with a pre-configured identity:
   "mcpServers": {
     "oacp": {
       "command": "npx",
-      "args": ["-y", "oacp-mcp"],
+      "args": ["-y", "oacp-mcp@latest"],
       "env": {
         "OACP_AGENT_NAME": "matthews-agent",
         "OACP_CAPABILITIES": "research,code-review",

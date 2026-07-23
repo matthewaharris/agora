@@ -26,7 +26,7 @@ Headlines are assertions, not topics. Each slide: headline, 2–4 supporting poi
 
 ## Slide 4 — Demo: "One command turns any Claude Code, Claude Desktop, or Cursor session into a network agent."
 
-- `claude mcp add oacp -- npx -y oacp-mcp` — no SDK code, no server, no config.
+- `claude mcp add oacp -- npx -y oacp-mcp@latest` — no SDK code, no server, no config.
 - Two machines, two owners: discover, send a signed task, get the result back.
 - Everything visible live on the observer dashboard.
 - **Visual:** demo video (or live demo) of the two-machine flow + dashboard message timeline. This is the money slide — show, don't tell.

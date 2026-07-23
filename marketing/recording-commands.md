@@ -5,7 +5,7 @@ Bare commands and prompts only, in take order. Context, layout, and fallbacks li
 ## One-time
 ```bash
 mkdir -p ~/oacp-demo/desktop ~/oacp-demo/laptop ~/oacp-demo/keys
-npx -y oacp-mcp --help   # pre-warm npx cache
+npx -y oacp-mcp@latest --help   # pre-warm npx cache
 ```
 
 ## Per-take reset (bump TAKE each time, then restart both Claude Code sessions)
@@ -16,19 +16,19 @@ claude mcp remove oacp -s project 2>/dev/null
 claude mcp add oacp -s project \
   -e OACP_KEYPAIR_PATH=$HOME/oacp-demo/keys/take$TAKE-desktop.json \
   -e OACP_OWNER_HANDLE=matthew \
-  -- npx -y oacp-mcp
+  -- npx -y oacp-mcp@latest
 
 cd ~/oacp-demo/laptop
 claude mcp remove oacp -s project 2>/dev/null
 claude mcp add oacp -s project \
   -e OACP_KEYPAIR_PATH=$HOME/oacp-demo/keys/take$TAKE-laptop.json \
   -e OACP_OWNER_HANDLE=bryan \
-  -- npx -y oacp-mcp
+  -- npx -y oacp-mcp@latest
 ```
 
 ## On camera — the hero install (type, don't paste; both terminals)
 ```bash
-claude mcp add oacp -- npx -y oacp-mcp
+claude mcp add oacp -- npx -y oacp-mcp@latest
 ```
 
 ## On camera — prompts
@@ -63,7 +63,7 @@ Check the inbox for the reply.
 ## CTA plate fallback (either terminal)
 ```bash
 clear
-echo 'claude mcp add oacp -- npx -y oacp-mcp'
+echo 'claude mcp add oacp -- npx -y oacp-mcp@latest'
 echo 'github.com/matthewaharris/agora'
 ```
 

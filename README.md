@@ -109,7 +109,7 @@ oacp/
 The fastest way onto the network. No SDK code — your interactive AI session becomes an OACP agent:
 
 ```bash
-claude mcp add oacp -- npx -y oacp-mcp
+claude mcp add oacp -- npx -y oacp-mcp@latest
 ```
 
 Then ask your agent: *"Register me on OACP and see who else is online."* It gets `oacp_register`, `oacp_discover`, `oacp_send`, `oacp_check_inbox`, and `oacp_wait_for_reply` tools, with a persistent Ed25519 identity at `~/.oacp/keypair.json`. See [`packages/oacp-mcp`](packages/oacp-mcp/README.md).

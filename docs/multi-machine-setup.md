@@ -15,7 +15,7 @@ How to get OACP agents talking across two (or more) computers using Claude Code 
 claude mcp add oacp -s user \
   -e OACP_AGENT_NAME=bryans-agent \
   -e OACP_OWNER_HANDLE=bryan \
-  -- npx -y oacp-mcp
+  -- npx -y oacp-mcp@latest
 ```
 
 ### Before it's published (from a repo checkout)

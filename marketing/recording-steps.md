@@ -20,7 +20,7 @@ The star of the video is two Claude Code sessions — `matthews-desktop` and `br
 - [ ] Node.js ≥ 20 (`node --version`)
 - [ ] Claude Code installed and logged in
 - [ ] OBS (or QuickTime) configured: 1080p minimum, 60fps if possible
-- [ ] `oacp-mcp` resolvable: `npx -y oacp-mcp --help` exits cleanly (pre-warms the npx cache so the install shot is instant)
+- [ ] `oacp-mcp` resolvable: `npx -y oacp-mcp@latest --help` exits cleanly (pre-warms the npx cache so the install shot is instant)
 
 ### Demo directories (Option B)
 ```bash
@@ -76,14 +76,14 @@ claude mcp remove oacp -s project 2>/dev/null
 claude mcp add oacp -s project \
   -e OACP_KEYPAIR_PATH=$DESKTOP_KEY \
   -e OACP_OWNER_HANDLE=matthew \
-  -- npx -y oacp-mcp
+  -- npx -y oacp-mcp@latest
 
 cd ~/oacp-demo/laptop
 claude mcp remove oacp -s project 2>/dev/null
 claude mcp add oacp -s project \
   -e OACP_KEYPAIR_PATH=$LAPTOP_KEY \
   -e OACP_OWNER_HANDLE=bryan \
-  -- npx -y oacp-mcp
+  -- npx -y oacp-mcp@latest
 ```
 
 Then:
@@ -94,7 +94,7 @@ Then:
 
 **Option A deltas:** on each real machine, per take run `mv ~/.oacp ~/.oacp.bak.$(date +%s)` (a fresh keypair is generated at the default path on next use), then `claude mcp remove oacp -s user` and re-add. This keeps the on-camera add command clean with no `-e` flags.
 
-**About the on-camera install shot:** the pretty command in the script is `claude mcp add oacp -- npx -y oacp-mcp`. It is real and it works — record that shot once, cleanly, in a scratch directory (it doesn't need to be the take's working config), and reuse the footage across takes. The per-take `-e OACP_KEYPAIR_PATH=...` variants above are functionally identical; they exist only so takes are repeatable.
+**About the on-camera install shot:** the pretty command in the script is `claude mcp add oacp -- npx -y oacp-mcp@latest`. It is real and it works — record that shot once, cleanly, in a scratch directory (it doesn't need to be the take's working config), and reuse the footage across takes. The per-take `-e OACP_KEYPAIR_PATH=...` variants above are functionally identical; they exist only so takes are repeatable.
 
 ---
 
@@ -108,7 +108,7 @@ Slow scroll through the prepared email thread, ~8 seconds of usable footage. Don
 ### Shot 2 — the install command [0:22–0:40]
 Both terminals visible, at shell prompts (not yet inside Claude Code). Type in the left, then the right:
 ```bash
-claude mcp add oacp -- npx -y oacp-mcp
+claude mcp add oacp -- npx -y oacp-mcp@latest
 ```
 Type at natural speed — this is the hero command; do not paste it. Let each confirmation line land. Hold 2s.
 
@@ -145,7 +145,7 @@ Dashboard: click the thread/correlation-id link on either message so the timelin
 Overlays are added in post. For a live-terminal fallback plate, in either terminal:
 ```bash
 clear
-echo 'claude mcp add oacp -- npx -y oacp-mcp'
+echo 'claude mcp add oacp -- npx -y oacp-mcp@latest'
 echo 'github.com/matthewaharris/agora'
 ```
 Hold 8s. **Stop recording.**
@@ -159,7 +159,7 @@ Hold 8s. **Stop recording.**
 - **Responder is idle?** The "watch your inbox" instruction usually keeps the left session polling; if it has gone quiet, `Check the OACP inbox now.` wakes it.
 - **Want a flashier task?** Swapping in "summarize this week's solid-state battery news" works (the responder will use web search) but takes 30–60s — too long for `wait_for_reply`. Only use it with the check-inbox-later flow, and budget the extra runtime.
 - **Dashboard card missing after register:** refresh the page once; confirm the settings gear points at the public registry.
-- **`npx` stalls on first run:** you skipped the pre-warm. `npx -y oacp-mcp --help` once off camera, then retake.
+- **`npx` stalls on first run:** you skipped the pre-warm. `npx -y oacp-mcp@latest --help` once off camera, then retake.
 - **429 on heartbeat** in tool output: harmless rate-limit noise; ignore, keep rolling.
 
 ## Post checklist
