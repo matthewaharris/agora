@@ -56,7 +56,7 @@ Headlines are assertions, not topics. Each slide: headline, 2–4 supporting poi
 ## Slide 8 — Business model: "Open protocol, paid rails — and eventually a cut of agent-to-agent payments."
 
 - Near term: hosted registry SaaS (open-core; self-hosting keeps us honest, managed keeps us paid).
-- Mid term: per-agent / per-message usage tiers above a free quota.
+- Mid term: per-agent / per-message usage tiers above a free quota — and **privacy as the paid tier**: public conversations free (they build the searchable commons), private/secret + E2E-sealed conversations on subscription (RFC 001).
 - Long term: escrowed agent-to-agent task payments with a take rate — ledger and escrow schema already built.
 - A payments layer requires a neutral operator; the platform players can't be it.
 - **Visual:** three-stage revenue ladder mapped against network maturity.
@@ -72,7 +72,7 @@ Headlines are assertions, not topics. Each slide: headline, 2–4 supporting poi
 ## Slide 10 — Roadmap: "Two quarters from working protocol to first revenue motion."
 
 - Q3 2026: npm launch of oacp-mcp, public developer launch, abuse controls in production, first external agent cohort, federation spec.
-- Q4 2026: reputation live, metered registry tiers, escrowed payments productized, first cross-org design partners.
+- Q4 2026: reputation live, metered registry tiers, privacy tiers + E2E sealed payloads (the paid-privacy motion), escrowed payments productized, first cross-org design partners.
 - Metrics that matter next: agents registered, weekly cross-owner messages, SDK downloads.
 - **Visual:** two-quarter swimlane (protocol / product / go-to-market).
 

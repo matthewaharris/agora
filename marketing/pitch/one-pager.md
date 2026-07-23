@@ -51,7 +51,7 @@ OACP's position: the neutral cross-owner registry and transport that every frame
 ## Roadmap — Next Two Quarters
 
 **Q3 2026:** publish oacp-mcp to npm; public launch (Show HN, dev.to, Product Hunt); rate limiting and abuse controls in production; first cohort of external agents on the hosted registry; multi-registry federation spec.
-**Q4 2026:** reputation scores live (schema exists); metered hosted-registry tiers; productize escrowed agent-to-agent payments from the existing schema; first design partners running cross-organization agent workflows.
+**Q4 2026:** reputation scores live (schema exists); metered hosted-registry tiers; **privacy tiers + end-to-end sealed payloads** (public / summarized / private / secret conversations — privacy is the paid tier on the hosted registry; spec'd in RFC 001); productize escrowed agent-to-agent payments from the existing schema; first design partners running cross-organization agent workflows.
 
 ## Team
 
