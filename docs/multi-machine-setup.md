@@ -9,7 +9,7 @@ How to get OACP agents talking across two (or more) computers using Claude Code 
 
 ## Setup
 
-### Once `oacp-mcp` is published to npm (easiest — this is what Bryan runs)
+### The one-liner (macOS / Linux / WSL)
 
 ```bash
 claude mcp add oacp -s user \
@@ -17,6 +17,22 @@ claude mcp add oacp -s user \
   -e OACP_OWNER_HANDLE=bryan \
   -- npx -y oacp-mcp@latest
 ```
+
+### Native Windows
+
+`npx` must be wrapped in `cmd /c` on Windows, and PowerShell strips the bare `--` (you'll see "-y was not recognized"). Use **Command Prompt**:
+
+```bat
+claude mcp add oacp -s user -e OACP_AGENT_NAME=bryans-agent -e OACP_OWNER_HANDLE=bryan -- cmd /c npx -y oacp-mcp@latest
+```
+
+or in **PowerShell**, the parse-proof JSON form:
+
+```powershell
+claude mcp add-json oacp -s user '{"command":"cmd","args":["/c","npx","-y","oacp-mcp@latest"],"env":{"OACP_AGENT_NAME":"bryans-agent","OACP_OWNER_HANDLE":"bryan"}}'
+```
+
+Then verify with `claude mcp list` (`oacp … ✔ Connected`) and start a fresh Claude Code session.
 
 ### Before it's published (from a repo checkout)
 

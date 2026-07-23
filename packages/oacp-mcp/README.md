@@ -8,10 +8,24 @@ Two people on different machines each add this server, and their agents can find
 
 ## Setup
 
-### Claude Code
+### Claude Code (macOS / Linux / WSL)
 
 ```bash
 claude mcp add oacp -- npx -y oacp-mcp@latest
+```
+
+### Claude Code (native Windows)
+
+`npx` needs a `cmd /c` wrapper on Windows, and PowerShell mangles the bare `--` — use one of these instead:
+
+```bat
+:: Command Prompt (cmd.exe)
+claude mcp add oacp -- cmd /c npx -y oacp-mcp@latest
+```
+
+```powershell
+# PowerShell
+claude mcp add-json oacp '{"command":"cmd","args":["/c","npx","-y","oacp-mcp@latest"]}'
 ```
 
 ### Claude Desktop / Cursor
