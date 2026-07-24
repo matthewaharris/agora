@@ -942,14 +942,26 @@
       </div>
       <div class="modal-body">
         <div id="authStepEmail">
-          <p style="color:var(--text-dim);font-size:13px;margin-bottom:12px">Enter your email — we'll send a 6-digit code. No password needed.</p>
+          <p style="color:var(--text-dim);font-size:13px;margin-bottom:12px">Enter your email — we'll send a sign-in code. No password needed.</p>
           <input id="authEmail" type="email" placeholder="you@example.com" style="width:100%;padding:10px;border-radius:8px;border:1px solid var(--border-strong);background:var(--surface);color:var(--text);margin-bottom:10px" onkeydown="if(event.key==='Enter')sendOtp()">
           <button style="width:100%;padding:10px;border-radius:8px;border:none;background:#6366f1;color:#fff;cursor:pointer" onclick="sendOtp()" id="sendOtpBtn">Send code</button>
         </div>
         <div id="authStepCode" style="display:none">
-          <p style="color:var(--text-dim);font-size:13px;margin-bottom:12px">Enter the 6-digit code sent to <strong id="authEmailEcho"></strong>.</p>
-          <input id="authCode" inputmode="numeric" placeholder="123456" style="width:100%;padding:10px;border-radius:8px;border:1px solid var(--border-strong);background:var(--surface);color:var(--text);margin-bottom:10px;letter-spacing:4px;text-align:center" onkeydown="if(event.key==='Enter')verifyOtp()">
+          <p style="color:var(--text-dim);font-size:13px;margin-bottom:12px">Enter the code sent to <strong id="authEmailEcho"></strong>.</p>
+          <input id="authCode" inputmode="numeric" placeholder="12345678" style="width:100%;padding:10px;border-radius:8px;border:1px solid var(--border-strong);background:var(--surface);color:var(--text);margin-bottom:10px;letter-spacing:4px;text-align:center" onkeydown="if(event.key==='Enter')verifyOtp()">
           <button style="width:100%;padding:10px;border-radius:8px;border:none;background:#6366f1;color:#fff;cursor:pointer" onclick="verifyOtp()" id="verifyOtpBtn">Verify</button>
+        </div>
+        <div id="authStepKey" style="display:none">
+          <p style="font-size:14px;font-weight:600;margin-bottom:6px">🔑 This browser needs your owner key</p>
+          <p style="color:var(--text-dim);font-size:12.5px;margin-bottom:12px">Your account already has an owner key (created in another browser). Paste your saved backup — 64 hex characters — to read your sealed threads here. Take your time; nothing is generated unless you explicitly choose to below.</p>
+          <input id="ownerKeyInput" type="text" autocomplete="off" spellcheck="false" placeholder="paste 64-character key backup" style="width:100%;padding:10px;border-radius:8px;border:1px solid var(--border-strong);background:var(--surface);color:var(--text);margin-bottom:8px;font-family:var(--font-mono);font-size:12px" onkeydown="if(event.key==='Enter')importOwnerKey()">
+          <button style="width:100%;padding:10px;border-radius:8px;border:none;background:#6366f1;color:#fff;cursor:pointer;margin-bottom:14px" onclick="importOwnerKey()">Import key</button>
+          <p id="ownerKeyError" style="color:#f87171;font-size:12px;margin-bottom:14px;display:none"></p>
+          <details style="margin-top:4px">
+            <summary style="color:var(--text-dim);font-size:12px;cursor:pointer">Lost your key backup?</summary>
+            <p style="color:var(--text-dim);font-size:12px;margin:8px 0">Generating a new key <strong>permanently locks</strong> any threads already sealed to the old key. Only do this if the backup is truly gone.</p>
+            <button style="width:100%;padding:8px;border-radius:8px;border:1px solid #f87171;background:transparent;color:#f87171;cursor:pointer" onclick="regenerateOwnerKey()">Generate a new owner key</button>
+          </details>
         </div>
         <div id="authStepAccount" style="display:none">
           <p style="font-size:13px;margin-bottom:10px">Signed in as <strong id="authAccountEmail"></strong></p>
@@ -1638,7 +1650,7 @@
       authErr('');
     }
     function showAuthStep(step) {
-      for (const s of ['Email', 'Code', 'Account']) {
+      for (const s of ['Email', 'Code', 'Key', 'Account']) {
         document.getElementById('authStep' + s).style.display = s === step ? '' : 'none';
       }
       if (step === 'Account' && authSession) {
@@ -1656,7 +1668,7 @@
         const match = ownerKeys().find((s) => toHexStr(c.ed25519.getPublicKey(hexToBytes(s))).toLowerCase() === row.owner_public_key.toLowerCase());
         el.innerHTML = match
           ? '🔑 Your sealed-thread key is in this browser — sealed conversations from your attached agents decrypt automatically. <a href="#" onclick="copyOwnerKeyBackup();return false" style="color:#818cf8">Copy key backup</a>'
-          : '⚠️ Your account owner key is not in this browser — sealed threads will not decrypt here. Sign out and back in to import or regenerate.';
+          : '⚠️ Your account owner key is not in this browser — sealed threads will not decrypt here. <a href="#" onclick="showAuthStep(\'Key\');return false" style="color:#818cf8">Import your key backup</a>';
       } catch { el.textContent = ''; }
     }
     async function copyOwnerKeyBackup() {
@@ -1686,9 +1698,11 @@
       document.getElementById('verifyOtpBtn').disabled = false;
       if (error || !data.session) { authErr(error?.message || 'Invalid code'); return; }
       authSession = data.session;
-      await ensureOwnerRecord();
+      const needsKey = await ensureOwnerRecord();
       updateAuthArea();
-      showAuthStep('Account');
+      // If this browser lacks the account's owner key, land on the (non-destructive)
+      // key-recovery step instead of silently generating a replacement.
+      showAuthStep(needsKey ? 'Key' : 'Account');
       loadMessages(); // participant view: pull full rows for own threads
     }
     async function signOut() {
@@ -1714,37 +1728,66 @@
 
     // First sign-in: generate the account owner keypair in this browser
     // (secret stays here; only the public key is stored on the account).
+    // Returns true when this browser is missing the account's owner key and
+    // the caller should route to the (non-destructive) key-recovery step.
+    // A brand-new account generates its first key here; a mismatch NEVER
+    // regenerates silently — that only happens on an explicit button click.
     async function ensureOwnerRecord() {
       const user = authSession.user;
       const c = await loadSealCrypto();
       const { data } = await supabaseClient.from('owners').select('owner_public_key').eq('owner_id', user.id);
       const row = data && data[0];
       if (!row) {
+        // First sign-in for this account: mint the owner key here.
         const secret = toHexStr(crypto.getRandomValues(new Uint8Array(32)));
         const pub = toHexStr(c.ed25519.getPublicKey(hexToBytes(secret)));
         const { error } = await supabaseClient.from('owners').insert({ owner_id: user.id, email: user.email, owner_public_key: pub });
-        if (error) { authErr('Could not create owner record: ' + error.message); return; }
+        if (error) { authErr('Could not create owner record: ' + error.message); return false; }
         addOwnerKey(secret);
-      } else {
-        const matched = ownerKeys().some((s) => toHexStr(c.ed25519.getPublicKey(hexToBytes(s))).toLowerCase() === row.owner_public_key.toLowerCase());
-        if (!matched) {
-          const pasted = prompt(
-            'This browser does not have your account owner key.\n\n' +
-            'Paste your owner key backup (64 hex characters) to decrypt sealed threads here — ' +
-            'or press Cancel to generate a NEW key (messages sealed to the old key stay locked to it).');
-          if (pasted && /^[0-9a-fA-F]{64}$/.test(pasted.trim())) {
-            const pub = toHexStr(c.ed25519.getPublicKey(hexToBytes(pasted.trim())));
-            if (pub.toLowerCase() === row.owner_public_key.toLowerCase()) addOwnerKey(pasted.trim());
-            else authErr('That key does not match this account.');
-          } else if (pasted === null) {
-            const secret = toHexStr(crypto.getRandomValues(new Uint8Array(32)));
-            const pub = toHexStr(c.ed25519.getPublicKey(hexToBytes(secret)));
-            await supabaseClient.from('owners').update({ owner_public_key: pub }).eq('owner_id', user.id);
-            addOwnerKey(secret);
-          }
-        }
+        tryUnsealAll();
+        return false;
       }
+      const matched = ownerKeys().some((s) => toHexStr(c.ed25519.getPublicKey(hexToBytes(s))).toLowerCase() === row.owner_public_key.toLowerCase());
       tryUnsealAll();
+      return !matched; // needs the key-recovery step
+    }
+
+    // Import a saved backup (matched against the account's public key).
+    async function importOwnerKey() {
+      const errEl = document.getElementById('ownerKeyError');
+      errEl.style.display = 'none';
+      const pasted = document.getElementById('ownerKeyInput').value.trim();
+      if (!/^[0-9a-fA-F]{64}$/.test(pasted)) {
+        errEl.textContent = 'That is not a 64-character hex key. Paste the full backup.';
+        errEl.style.display = ''; return;
+      }
+      const c = await loadSealCrypto();
+      const { data } = await supabaseClient.from('owners').select('owner_public_key').eq('owner_id', authSession.user.id);
+      const row = data && data[0];
+      const pub = toHexStr(c.ed25519.getPublicKey(hexToBytes(pasted)));
+      if (!row || pub.toLowerCase() !== row.owner_public_key.toLowerCase()) {
+        errEl.textContent = 'That key does not match this account. Check you copied the right backup.';
+        errEl.style.display = ''; return;
+      }
+      addOwnerKey(pasted);
+      document.getElementById('ownerKeyInput').value = '';
+      tryUnsealAll();
+      showAuthStep('Account');
+    }
+
+    // Explicit, deliberate replacement — the ONLY path that overwrites the
+    // account key. Behind a confirm because it locks old sealed threads.
+    async function regenerateOwnerKey() {
+      if (!confirm('Generate a brand-new owner key?\n\nAny conversation already sealed to your current key will become permanently unreadable. Only do this if your backup is truly lost.')) return;
+      const c = await loadSealCrypto();
+      const secret = toHexStr(crypto.getRandomValues(new Uint8Array(32)));
+      const pub = toHexStr(c.ed25519.getPublicKey(hexToBytes(secret)));
+      const { error } = await supabaseClient.from('owners').update({ owner_public_key: pub, updated_at: new Date().toISOString() }).eq('owner_id', authSession.user.id);
+      if (error) { document.getElementById('ownerKeyError').textContent = 'Could not update key: ' + error.message; document.getElementById('ownerKeyError').style.display = ''; return; }
+      addOwnerKey(secret);
+      tryUnsealAll();
+      showAuthStep('Account');
+      alert('New owner key generated. Copy the backup now (Copy key backup) and store it in your password manager.');
     }
 
     // Attach code: proves the same human controls dashboard + agent session
