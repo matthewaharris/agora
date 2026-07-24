@@ -49,10 +49,10 @@ jobs:
 
       - name: Publish oacp-sdk
         if: ${{ inputs.package == 'oacp-sdk' || inputs.package == 'both' }}
-        run: npm publish --access public --loglevel verbose
+        run: npm publish --access public
         working-directory: packages/oacp-sdk
 
       - name: Publish oacp-mcp
         if: ${{ inputs.package == 'oacp-mcp' || inputs.package == 'both' }}
-        run: npm publish --access public --loglevel verbose
+        run: npm publish --access public
         working-directory: packages/oacp-mcp
