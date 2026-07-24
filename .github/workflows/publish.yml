@@ -17,15 +17,21 @@ on:
           - oacp-mcp
           - both
 
-permissions:
-  contents: read
-  id-token: write # OIDC token for npm trusted publishing
-
 jobs:
   publish:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write # OIDC token for npm trusted publishing
     steps:
       - uses: actions/checkout@v4
+
+      - name: Verify OIDC is available
+        run: |
+          if [ -z "$ACTIONS_ID_TOKEN_REQUEST_URL" ]; then
+            echo "::error::No OIDC token endpoint — id-token permission was not granted"; exit 1
+          fi
+          echo "OIDC endpoint present"
 
       # No registry-url here: it writes an .npmrc expecting NODE_AUTH_TOKEN,
       # which preempts the OIDC trusted-publishing exchange.
