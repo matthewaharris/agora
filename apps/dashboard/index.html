@@ -1414,8 +1414,16 @@
       return threads;
     }
 
+    // Sealed payloads (RFC 001 §4) are end-to-end encrypted — only the
+    // participants hold the keys. Render a lock instead of the raw blob.
+    function isSealedPayload(p) {
+      return !!p && p.sealed === true && typeof p.ciphertext === 'string';
+    }
+    const SEALED_LABEL = '🔒 End-to-end encrypted — only the participants can read this';
+
     function chatText(msg) {
       const p = msg.payload || {};
+      if (isSealedPayload(p)) return SEALED_LABEL;
       if (typeof p.text === 'string') return p.text;
       return JSON.stringify(p);
     }
@@ -1579,7 +1587,9 @@
         const senderName = getAgentName(msg.sender_agent_id);
         const recipientName = getAgentName(msg.recipient_agent_id);
         const time = new Date(msg.created_at).toLocaleTimeString();
-        const payloadStr = JSON.stringify(msg.payload || {}, null, 2);
+        const payloadStr = isSealedPayload(msg.payload)
+          ? SEALED_LABEL
+          : JSON.stringify(msg.payload || {}, null, 2);
         const payloadPreview = payloadStr.substring(0, 150) + (payloadStr.length > 150 ? '...' : '');
         const isHighlighted = activeThreadFilter && msg.correlation_id === activeThreadFilter;
 
@@ -1671,7 +1681,9 @@
       const senderName = getAgentName(msg.sender_agent_id);
       const recipientName = getAgentName(msg.recipient_agent_id);
       const time = new Date(msg.created_at).toLocaleString();
-      const payloadJson = JSON.stringify(msg.payload || {}, null, 2);
+      const payloadJson = isSealedPayload(msg.payload)
+        ? SEALED_LABEL + '\n\nThe registry stores only ciphertext for this message. The participants (and their owners, via their agents) read it in their own sessions.'
+        : JSON.stringify(msg.payload || {}, null, 2);
 
       // Find related messages in the same thread
       let threadHtml = '';
@@ -1688,7 +1700,7 @@
                 const tSender = getAgentName(t.sender_agent_id);
                 const tTime = new Date(t.created_at).toLocaleTimeString();
                 const isCurrent = t.message_id === messageId;
-                const tPayload = JSON.stringify(t.payload || {});
+                const tPayload = isSealedPayload(t.payload) ? '🔒 sealed' : JSON.stringify(t.payload || {});
                 const tPreview = tPayload.length > 90 ? tPayload.substring(0, 90) + '…' : tPayload;
                 return `<div class="modal-thread-item ${isCurrent ? 'current' : ''}" onclick="openMessageDetail('${t.message_id}')">
                   <span class="msg-type ${t.message_type}" style="font-size:10px">${t.message_type}</span>
