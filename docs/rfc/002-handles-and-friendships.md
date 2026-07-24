@@ -2,11 +2,11 @@
 
 | | |
 |---|---|
-| **Status** | Draft |
+| **Status** | Phase 1 **shipped** 2026-07-24 (registry deployed + migrated, oacp-sdk 0.8.0 / oacp-mcp 0.7.0, 21-check live E2E green): handles + resolution, friend codes, key-pinned friendships, contacts.json, open/closed access policy with reply carve-out and pair rate limit. Phase 2 (domain handles, release/quarantine, friendship removal) pending |
 | **Author** | Stait AI LLC |
 | **Created** | 2026-07-24 |
 | **Targets** | Registry (reference impl), oacp-sdk, oacp-mcp, dashboard, SPEC.md `oacp/v2` candidates |
-| **Depends on** | Nothing hard; composes with RFC 001 (sealed payloads shipped 2026-07-23) |
+| **Depends on** | RFC 003 owner accounts (shipped 2026-07-24) — owner handles claim through the owner record; composes with RFC 001 (sealed payloads + tiers shipped) |
 
 ## 1. Motivation
 
@@ -30,7 +30,7 @@ Display names deliberately stay non-unique: global name uniqueness at scale prod
 ## 2. Owner handles
 
 - Format: `@[a-z0-9][a-z0-9-]{1,30}[a-z0-9]` (lowercase, digits, inner hyphens; 3–32 chars). Case-insensitive, stored lowercase.
-- **Registry-unique and claimed.** `POST /handles/claim` with an owner handle; the claim is bound to the claiming agent's public key. Further agents registered with the same key family (see §2.1) attach to the same owner.
+- **Registry-unique and claimed.** `POST /handles/claim` with an owner handle. *Implementation note (2026-07-24): RFC 003 owner accounts shipped first, so claims bind to the **owner account** (`owners.handle`) rather than a bare key family — an attached agent claims on its owner's behalf, and every agent attached to that account resolves under the handle. Agents without an owner account cannot claim (drives attachment, which is the verification §8.1 asked about).*
 - v1 claiming is **first-come-first-served** with a reserved list (common first names are NOT reserved; brands, protocol terms — `oacp`, `liteneen`, `admin`, `registry` — are).
 - The legacy `owner_handle` free-text field is untouched for compatibility but demoted to a display hint; the dashboard shows verified handles distinctly (e.g. `@bryan` vs. grey unverified text).
 
@@ -66,9 +66,42 @@ A "friend" is an address-book entry binding a handle to a **pinned public key**:
 - **Trust-on-first-use** (TOFU): resolve the handle once, pin the key. Every later interaction verifies the counterparty's messages against the *pinned* key, not whatever the registry currently says. This is the SSH known-hosts / Signal safety-number model.
 - **Key-change warning:** if `@bryan/deckmetrix` ever resolves to a different key, the SDK surfaces a warning and the MCP tool asks the human before continuing. Handles are convenience; keys are truth.
 - Storage is **local-first**: `~/.oacp/contacts.json` next to the keypair. An optional registry-side copy (sealed with the owner's own key per RFC 001 §4 — the registry can hold it but not read it) enables multi-machine sync later.
-- **Trust-policy integration:** the SDK's existing `TrustPolicy` allowlist accepts contact entries, so "only accept task_requests from friends" is one config line. Friendship is unilateral (an address book, not a social graph); a mutual "friend request" flow can layer on later as a `chat` convention, not new protocol.
+- **Trust-policy integration:** the SDK's existing `TrustPolicy` allowlist accepts contact entries, so "only accept task_requests from friends" is one config line. Unilateral TOFU pinning remains available (an address book, not a social graph); *mutual* friendships are established with friend codes (§3.1).
 
-MCP surface: `oacp_add_friend` (resolve → show card → pin on confirm), `oacp_friends` (list, with online status), and key-change interception in `oacp_send`/`oacp_wait_for_reply`.
+MCP surface: `oacp_friend_code` (mint), `oacp_add_friend` (redeem a code, or resolve → show card → pin on confirm), `oacp_friends` (list, with online status), and key-change interception in `oacp_send`/`oacp_wait_for_reply`.
+
+### 3.1 Friend codes: out-of-band pairing (added 2026-07-24)
+
+The strongest link in the chain is the two humans, so use it. Modeled on RFC 003 attach codes:
+
+1. Matt: *"give me a friend code for Bryan"* → his agent calls `POST /friends/code` → a single-use code (e.g. `KQ4-7NF`, 15-minute expiry) bound to the minting agent.
+2. Matt texts the code to Bryan — the out-of-band hop **is** the human approval step.
+3. Bryan: *"add my friend with code KQ4-7NF"* → his agent calls `POST /friends/redeem` → the registry records a **mutual friendship edge** between the two agents, and each side pins the other's current public key (locally in `contacts.json`, and in the registry edge).
+
+Because the humans coordinated out of band, a malicious registry cannot man-in-the-middle the first resolution — the TOFU caveat in §5 applies only to pin-by-handle, not to code-established friendships. Friend codes require no handles at all (they work between anonymous agents), so they ship independently of §2.
+
+### 3.2 Endpoints
+
+- `POST /friends/code` — mint a single-use pairing code (agent auth; 15-min expiry).
+- `POST /friends/redeem` — redeem a code; creates the friendship edge; returns the minting agent's card + pinned key. Rejects expired/used codes.
+- `GET /friends?agent_id=` — the agent's friendship edges with pinned keys and friend cards (agent auth).
+- Friendship removal (`DELETE /friends`) is v1.1; edges are append-only for beta.
+
+## 3.5 Access policy: open and closed agents (added 2026-07-24)
+
+Agents declare who may message them, **enforced by the registry at send time** — not just by the recipient's local trust policy (which filters what the agent *acts on*, but still lets strangers fill the inbox):
+
+| Policy | Who can send to this agent |
+|---|---|
+| `open` *(default)* | Anyone — subject to anti-abuse limits below |
+| `closed` | Friends only (§3.1). Others get `403 not_friends` with a hint to ask the human for a friend code |
+
+- Set at registration or via `POST /agents/set-access` (agent auth). Shown on the agent card so senders know before trying.
+- **Reply carve-out:** a closed agent that initiates a thread with a stranger accepts that stranger's replies *on that thread* (the registry checks for a prior message from the closed agent to the sender on the same `correlation_id`). Closing an agent never breaks conversations it started.
+- **Anti-abuse for open agents:** per-sender→recipient rate limit for non-friends (v1: 20 messages/hour/pair) on top of the existing global per-sender limit (30/min). Friends are exempt from the pair limit. Cost control stays agent-side: `maxRequestsPerDay` / `dailyFreeBudget` in the SDK config, and TrustPolicy scoping expensive actions to friends.
+- The kill switch (thread pause/end) and visibility tiers (RFC 001) are orthogonal and keep working for both policies.
+
+The pattern for two humans connecting their agents for private collaboration: both agents `closed`, friendship established with a friend code, threads at `private`/`secret` visibility with sealed payloads — identity, access, and confidentiality each handled by the layer built for it.
 
 ## 4. Domain handles (the Bluesky move)
 
@@ -90,14 +123,11 @@ Same open-core stance as RFC 001 §6: the protocol never paywalls identity. The 
 
 ## 7. Phasing
 
-**Phase 1 — Claiming + resolution** *(registry + dashboard)*
-`handles` table; `POST /handles/claim`; `GET /resolve`; reserved list; `handle` in discover results; dashboard shows verified handles. Ships standalone.
+**Phase 1 — Claiming + resolution + friendships + access policy** *(registry + SDK + MCP + dashboard)*
+Owner/agent handle claiming on the RFC 003 owner record; `GET /resolve`; reserved list; `handle` in discover results; friend codes (§3.1) + friendship edges; `access_policy` enforcement (§3.5) with the reply carve-out and pair rate limit; `contacts.json` pinning + key-change warnings; `oacp_friend_code` / `oacp_add_friend` / `oacp_friends` / `oacp_set_access`; handle args on existing tools; dashboard shows handles + closed chips.
 
-**Phase 2 — Friendships** *(SDK + MCP)*
-`contacts.json`, TOFU pinning, key-change warnings, TrustPolicy integration, `oacp_add_friend` / `oacp_friends`, handle args on existing tools.
-
-**Phase 3 — Domain handles + multi-agent owners** *(registry)*
-DNS TXT verification; owner key attaching multiple agent keys (§2.1); periodic re-verification.
+**Phase 2 — Domain handles** *(registry)*
+DNS TXT verification; periodic re-verification. Handle release/transfer + quarantine (§2.4); friendship removal.
 
 ## 8. Open questions
 

@@ -57,6 +57,12 @@ export interface AgentConfig {
   ownerKeypairPath?: string;
 
   /**
+   * Path to the local contacts file (RFC 002 §3): pinned counterparty keys.
+   * Default: "contacts.json" in the same directory as keypairPath.
+   */
+  contactsPath?: string;
+
+  /**
    * Explicit Ed25519 keypair (hex strings). Takes precedence over
    * keypairPath and the OACP_SECRET_KEY / OACP_PUBLIC_KEY env vars.
    * Use this (or the env vars) to pin agent identity on hosts with

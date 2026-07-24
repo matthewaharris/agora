@@ -62,7 +62,9 @@ function compactAgentCard(a: Record<string, unknown>) {
   return {
     agent_id: a.agent_id,
     name: a.name,
+    ...(a.handle ? { handle: a.handle } : {}),
     owner_handle: a.owner_handle,
+    ...(a.access_policy === 'closed' ? { access_policy: 'closed' } : {}),
     description: a.description,
     capabilities: a.capabilities,
     status: a.status,
@@ -167,7 +169,7 @@ export function buildServer(): { server: McpServer; shutdown: () => Promise<void
     return agent;
   }
 
-  const server = new McpServer({ name: 'oacp', version: '0.6.0' });
+  const server = new McpServer({ name: 'oacp', version: '0.7.0' });
 
   // ----------------------------------------------------------
   // oacp_register
@@ -271,16 +273,18 @@ export function buildServer(): { server: McpServer; shutdown: () => Promise<void
       title: 'Discover agents on the OACP network',
       description:
         'Search the OACP registry for other agents by capability, status, or owner. ' +
-        "Works without registering. Returns agent cards with agent_id (needed for oacp_send), capabilities, and the actions they advertise in metadata.action_specs.",
+        "Works without registering. Returns agent cards with agent_id (needed for oacp_send), capabilities, and the actions they advertise in metadata.action_specs. " +
+        "If you know the agent's claimed handle (e.g. '@matt/desktop' or '@matt'), pass it as 'handle' for exact resolution instead of fuzzy search.",
       inputSchema: {
+        handle: z.string().optional().describe("Exact claimed handle: '@owner/agent' for one card, '@owner' for all of an owner's agents"),
         capability: z.string().optional().describe("Filter by capability tag, e.g. 'research'"),
         status: z.enum(['online', 'offline', 'busy']).optional().describe('Filter by status'),
-        owner_handle: z.string().optional().describe('Filter by owner handle'),
+        owner_handle: z.string().optional().describe('Filter by legacy free-text owner handle (unverified; prefer handle)'),
         page: z.number().int().min(1).optional(),
         page_size: z.number().int().min(1).max(100).optional().describe('Results per page (default 20)'),
       },
     },
-    async ({ capability, status, owner_handle, page, page_size }) => {
+    async ({ handle, capability, status, owner_handle, page, page_size }) => {
       try {
         // Discovery is unauthenticated — use any agent instance, registered or not.
         const a = agent ?? new OACPAgent({
@@ -291,6 +295,10 @@ export function buildServer(): { server: McpServer; shutdown: () => Promise<void
           supabaseAnonKey: env.supabaseAnonKey,
           apiBaseUrl: env.apiBaseUrl,
         });
+        if (handle) {
+          const resolved = await a.resolveHandle(handle);
+          return jsonResult(resolved);
+        }
         const res = await a.discover({ capability, status, owner_handle, page, page_size });
         return jsonResult({
           total: res.total,
@@ -317,7 +325,9 @@ export function buildServer(): { server: McpServer; shutdown: () => Promise<void
         "Use message_type 'chat' for a conversation (Agent DM): payload is { text: \"...\" }, and the correlation_id is the conversation thread — reuse the same one for every turn. " +
         'Registers this session automatically if needed. After sending, use oacp_wait_for_reply (same correlation_id) to get the response.',
       inputSchema: {
-        recipient_agent_id: z.string().uuid().describe('Target agent_id from oacp_discover'),
+        recipient_agent_id: z
+          .string()
+          .describe('Target agent_id from oacp_discover, or a claimed handle like "@matt/desktop" (resolved via the registry, checked against pinned keys)'),
         message_type: z.enum(MESSAGE_TYPES).default('task_request'),
         payload: z
           .record(z.unknown())
@@ -350,6 +360,23 @@ export function buildServer(): { server: McpServer; shutdown: () => Promise<void
     async ({ recipient_agent_id, message_type, payload, correlation_id, seal, visibility, public_summary }) => {
       try {
         const a = await requireRegistered();
+        // Handle recipients (RFC 002): resolve @owner/agent to the card and
+        // verify against the locally pinned key before sending.
+        if (recipient_agent_id.startsWith('@')) {
+          const resolved = await a.resolveHandle(recipient_agent_id);
+          const card = resolved.agent;
+          if (!card?.agent_id) {
+            return errorResult(`Handle ${recipient_agent_id} did not resolve to a single agent (use @owner/agent form)`);
+          }
+          const contact = a.contacts()[card.agent_id];
+          if (contact && contact.public_key !== card.public_key) {
+            return errorResult(
+              `KEY CHANGE for ${recipient_agent_id}: the registry reports a different key than the one pinned when this friend was added. ` +
+              'Do NOT proceed automatically — ask the human to verify with the counterparty out of band, then re-add the friend to re-pin.',
+            );
+          }
+          recipient_agent_id = card.agent_id;
+        }
         // Every message gets a correlation_id so both sides can track the
         // thread — generated here if the caller didn't supply one.
         const threadId = correlation_id || crypto.randomUUID();
@@ -620,6 +647,150 @@ export function buildServer(): { server: McpServer; shutdown: () => Promise<void
                 ? 'Thread paused — the registry blocks sends on it until a participant resumes.'
                 : 'Thread resumed — messages can flow again.',
         });
+      } catch (err) {
+        return errorResult(err instanceof Error ? err.message : String(err));
+      }
+    },
+  );
+
+  // ----------------------------------------------------------
+  // oacp_claim_handle (RFC 002)
+  // ----------------------------------------------------------
+  server.registerTool(
+    'oacp_claim_handle',
+    {
+      title: 'Claim a handle (@owner/agent)',
+      description:
+        'Claim the unique, human-memorable handle for this agent and/or its owner (RFC 002). Requires the agent to be attached to a Liteneen owner account (oacp_attach_owner). ' +
+        "The owner handle (e.g. 'matt') is claimed once per account, first-come-first-served; each agent then gets a name under it (e.g. 'desktop' → @matt/desktop). " +
+        'Other agents can then find this agent by handle instead of fuzzy name search. Ask the human what handle they want — do not invent one.',
+      inputSchema: {
+        owner_handle: z.string().optional().describe("The account's handle, e.g. 'matt' (3-32 chars, lowercase/digits/hyphens). Omit if already claimed."),
+        agent_handle: z.string().optional().describe("This agent's name under the owner, e.g. 'desktop' (1-32 chars)"),
+      },
+    },
+    async ({ owner_handle, agent_handle }) => {
+      try {
+        const a = await requireRegistered();
+        const res = await a.claimHandle({ ownerHandle: owner_handle, agentHandle: agent_handle });
+        return jsonResult(res);
+      } catch (err) {
+        return errorResult(err instanceof Error ? err.message : String(err));
+      }
+    },
+  );
+
+  // ----------------------------------------------------------
+  // oacp_friend_code (RFC 002 §3.1)
+  // ----------------------------------------------------------
+  server.registerTool(
+    'oacp_friend_code',
+    {
+      title: 'Mint a friend code',
+      description:
+        'Create a single-use pairing code (expires in 15 minutes) that establishes a mutual, key-pinned friendship when redeemed. ' +
+        'Flow: mint the code, the human gives it to the other human out of band (text/call — that hop IS the approval), and the other agent redeems it with oacp_add_friend. ' +
+        "Friends bypass rate limits and are the only agents that can message a 'closed' agent (oacp_set_access).",
+      inputSchema: {},
+    },
+    async () => {
+      try {
+        const a = await requireRegistered();
+        const res = await a.mintFriendCode();
+        return jsonResult(res);
+      } catch (err) {
+        return errorResult(err instanceof Error ? err.message : String(err));
+      }
+    },
+  );
+
+  // ----------------------------------------------------------
+  // oacp_add_friend (RFC 002 §3)
+  // ----------------------------------------------------------
+  server.registerTool(
+    'oacp_add_friend',
+    {
+      title: 'Add a friend (redeem code or pin a handle)',
+      description:
+        "Establish trust with another agent. Preferred: redeem a friend code the human received out of band ('code' parameter) — creates a mutual registry friendship and pins the friend's key locally. " +
+        "Alternative: pin by handle or agent_id ('peer' parameter) — trust-on-first-use, weaker (no mutual edge; trusts the registry's answer once). " +
+        'Never guess codes. If a key-change warning appears, stop and ask the human to verify out of band.',
+      inputSchema: {
+        code: z.string().optional().describe('Friend code from the other human, e.g. "KQ4-7NF"'),
+        peer: z.string().optional().describe('Handle (@owner/agent) or agent_id to TOFU-pin instead of using a code'),
+        note: z.string().optional().describe('Optional note for the contact entry, e.g. "Uncle Bryan — DeckMetriX"'),
+      },
+    },
+    async ({ code, peer, note }) => {
+      try {
+        const a = await requireRegistered();
+        if (!code && !peer) return errorResult('Provide a friend code (preferred) or a peer handle/agent_id to pin');
+        if (code) {
+          const contact = await a.addFriend(code, note);
+          return jsonResult({
+            friend: contact,
+            note: 'Mutual friendship established and key pinned. You can now message each other without rate limits, even if either agent is closed.',
+          });
+        }
+        const contact = await a.pinContact(peer!, note);
+        return jsonResult({
+          contact,
+          note: 'Key pinned (TOFU — one-sided). For a mutual friendship that satisfies closed-agent gating, have the other human send a friend code instead.',
+        });
+      } catch (err) {
+        return errorResult(err instanceof Error ? err.message : String(err));
+      }
+    },
+  );
+
+  // ----------------------------------------------------------
+  // oacp_friends (RFC 002 §3)
+  // ----------------------------------------------------------
+  server.registerTool(
+    'oacp_friends',
+    {
+      title: 'List friends',
+      description:
+        "List this agent's registry friendships with online status and key health. key_changed=true on any entry means the counterparty's registry key no longer matches the pinned one — surface that to the human prominently and do not message that friend until verified.",
+      inputSchema: {},
+    },
+    async () => {
+      try {
+        const a = await requireRegistered();
+        const res = await a.listFriends();
+        const changed = res.friends.filter((f: { key_changed?: boolean }) => f.key_changed);
+        return jsonResult({
+          ...res,
+          ...(changed.length
+            ? { warning: `${changed.length} friend(s) have a CHANGED KEY — verify out of band before messaging them.` }
+            : {}),
+        });
+      } catch (err) {
+        return errorResult(err instanceof Error ? err.message : String(err));
+      }
+    },
+  );
+
+  // ----------------------------------------------------------
+  // oacp_set_access (RFC 002 §3.5)
+  // ----------------------------------------------------------
+  server.registerTool(
+    'oacp_set_access',
+    {
+      title: 'Set who may message this agent',
+      description:
+        "Set this agent's access policy, enforced by the registry at send time. 'open' (default): anyone can message it, non-friends limited to 20 messages/hour. " +
+        "'closed': only friends can message it (plus replies on threads this agent started) — strangers get an error telling them to ask for a friend code. " +
+        'Use closed for personal/collaboration agents; open for public service agents. Confirm with the human before changing.',
+      inputSchema: {
+        access_policy: z.enum(['open', 'closed']).describe('open = anyone (rate limited) | closed = friends only'),
+      },
+    },
+    async ({ access_policy }) => {
+      try {
+        const a = await requireRegistered();
+        const res = await a.setAccessPolicy(access_policy);
+        return jsonResult(res);
       } catch (err) {
         return errorResult(err instanceof Error ? err.message : String(err));
       }

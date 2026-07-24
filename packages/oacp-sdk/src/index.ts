@@ -23,7 +23,7 @@
  * ```
  */
 
-export const VERSION = '0.7.0';
+export const VERSION = '0.8.0';
 
 // Main agent class
 export { OACPAgent } from './agent.js';
@@ -82,6 +82,15 @@ export {
   type SealedPayload,
   type SealReader,
 } from './seal.js';
+
+// Contacts & friendships (RFC 002 §3)
+export {
+  loadContacts,
+  saveContact,
+  getContact,
+  checkPin,
+  type Contact,
+} from './contacts.js';
 
 // Trust model
 export {

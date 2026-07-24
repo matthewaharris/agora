@@ -47,6 +47,10 @@ const RATE_LIMITS: Record<string, { window: number; max: number }> = {
   '/heartbeat': { window: 60, max: 5 },
   '/messages/send': { window: 60, max: 30 },
   '/threads/update': { window: 60, max: 30 },
+  '/handles/claim': { window: 60, max: 10 },
+  '/friends/code': { window: 60, max: 10 },
+  '/friends/redeem': { window: 60, max: 10 },
+  '/resolve': { window: 60, max: 60 },
   '/discover': { window: 60, max: 60 },
   '/collect-payment': { window: 60, max: 30 },
   '/credit-work': { window: 60, max: 30 },
@@ -465,7 +469,7 @@ async function handleDiscover(req: Request): Promise<Response> {
   let query = supabase
     .from('agents')
     .select(
-      'agent_id, name, owner_handle, description, endpoint_url, capabilities, status, public_key, protocols_supported, metadata, last_seen_at, created_at, updated_at, owners:owner_id(owner_public_key)',
+      'agent_id, name, owner_handle, handle, access_policy, description, endpoint_url, capabilities, status, public_key, protocols_supported, metadata, last_seen_at, created_at, updated_at, owners:owner_id(owner_public_key, handle)',
       { count: 'exact' },
     );
 
@@ -500,10 +504,17 @@ async function handleDiscover(req: Request): Promise<Response> {
 
   // Flatten the owners join: account owner_public_key (RFC 003) rides on
   // the card so senders can seal to the owner without a second lookup.
+  // RFC 002: the claimed, fully-qualified handle (@owner/agent) when both
+  // parts exist — distinct from the legacy free-text owner_handle hint.
   const agents = (data || []).map((a: Record<string, unknown>) => {
-    const owners = a.owners as { owner_public_key?: string } | null;
-    const { owners: _drop, ...card } = a;
-    return { ...card, owner_public_key: owners?.owner_public_key ?? null };
+    const owners = a.owners as { owner_public_key?: string; handle?: string } | null;
+    const { owners: _drop, handle: agentHandle, ...card } = a;
+    return {
+      ...card,
+      handle: owners?.handle && agentHandle ? `@${owners.handle}/${agentHandle}` : null,
+      owner_verified_handle: owners?.handle ? `@${owners.handle}` : null,
+      owner_public_key: owners?.owner_public_key ?? null,
+    };
   });
 
   return jsonResponse({
@@ -603,6 +614,407 @@ async function handleOwnersAttach(req: Request): Promise<Response> {
   });
 }
 
+// ============================================================
+// RFC 002 — Handles, friendships, access policy
+// ============================================================
+
+const HANDLE_RE = /^[a-z0-9](?:[a-z0-9-]{0,30}[a-z0-9])?$/;
+const RESERVED_HANDLES = new Set([
+  'oacp', 'liteneen', 'agora', 'stait', 'admin', 'administrator', 'registry',
+  'root', 'support', 'help', 'api', 'www', 'mail', 'owner', 'agent', 'agents',
+  'system', 'moderator', 'staff', 'official', 'security', 'abuse', 'billing',
+]);
+
+/** Authenticate an agent by agent_id + Bearer registry token. */
+async function requireAgentAuth(
+  req: Request,
+  agentId: unknown,
+  // deno-lint-ignore no-explicit-any
+): Promise<{ agent: any } | { error: Response }> {
+  const idErrors = validateUUID(agentId, 'agent_id');
+  if (idErrors.length > 0) return { error: validationErrorResponse(idErrors) };
+
+  const token = extractBearerToken(req);
+  if (!token) {
+    return { error: errorResponse('Authorization header with Bearer token required', 401) };
+  }
+
+  const supabase = getSupabaseAdmin();
+  const tokenHash = await hashToken(token);
+  const { data: agent, error } = await supabase
+    .from('agents')
+    .select('agent_id, name, public_key, registry_token, owner_id, handle, access_policy')
+    .eq('agent_id', agentId)
+    .single();
+
+  if (error || !agent) return { error: errorResponse('Agent not found', 404) };
+  if (agent.registry_token !== tokenHash) return { error: errorResponse('Invalid registry token', 403) };
+  return { agent };
+}
+
+/**
+ * POST /handles/claim — claim an owner handle and/or this agent's handle.
+ * Body: { agent_id, owner_handle?, agent_handle? }
+ * Agent auth; the agent must be attached to an owner account (RFC 003).
+ */
+async function handleHandlesClaim(req: Request): Promise<Response> {
+  let body: Record<string, unknown>;
+  try {
+    body = await req.json();
+  } catch {
+    return errorResponse('Invalid JSON body', 400);
+  }
+
+  const auth = await requireAgentAuth(req, body.agent_id);
+  if ('error' in auth) return auth.error;
+  const agent = auth.agent;
+
+  if (!agent.owner_id) {
+    return errorResponse(
+      'Handles require an owner account: attach this agent first (dashboard → "Attach an agent", then oacp_attach_owner)',
+      403,
+      { error_code: 'no_owner_account' },
+    );
+  }
+
+  const ownerHandle = body.owner_handle as string | undefined;
+  const agentHandle = body.agent_handle as string | undefined;
+  if (ownerHandle === undefined && agentHandle === undefined) {
+    return errorResponse('Provide owner_handle and/or agent_handle', 400);
+  }
+
+  const supabase = getSupabaseAdmin();
+  const { data: owner } = await supabase
+    .from('owners')
+    .select('owner_id, handle')
+    .eq('owner_id', agent.owner_id)
+    .single();
+  if (!owner) return errorResponse('Owner account not found', 404);
+
+  let finalOwnerHandle = owner.handle as string | null;
+
+  if (ownerHandle !== undefined) {
+    const h = String(ownerHandle).toLowerCase().replace(/^@/, '');
+    if (!HANDLE_RE.test(h) || h.length < 3) {
+      return errorResponse('owner_handle must be 3-32 chars: lowercase letters, digits, inner hyphens', 400);
+    }
+    if (RESERVED_HANDLES.has(h)) {
+      return errorResponse(`Handle "@${h}" is reserved`, 403, { error_code: 'handle_reserved' });
+    }
+    if (owner.handle && owner.handle !== h) {
+      return errorResponse(
+        `This account already claimed "@${owner.handle}" — release/transfer is not yet supported`,
+        409,
+        { error_code: 'handle_already_claimed', current: owner.handle },
+      );
+    }
+    if (!owner.handle) {
+      const { error: claimError } = await supabase
+        .from('owners')
+        .update({ handle: h, updated_at: new Date().toISOString() })
+        .eq('owner_id', agent.owner_id);
+      if (claimError) {
+        // Unique violation → someone else holds it
+        return errorResponse(`Handle "@${h}" is taken`, 409, { error_code: 'handle_taken' });
+      }
+    }
+    finalOwnerHandle = h;
+  }
+
+  let finalAgentHandle = agent.handle as string | null;
+
+  if (agentHandle !== undefined) {
+    const h = String(agentHandle).toLowerCase().replace(/^@/, '');
+    if (!HANDLE_RE.test(h)) {
+      return errorResponse('agent_handle must be 1-32 chars: lowercase letters, digits, inner hyphens', 400);
+    }
+    const { error: setError } = await supabase
+      .from('agents')
+      .update({ handle: h })
+      .eq('agent_id', agent.agent_id);
+    if (setError) {
+      return errorResponse(
+        `Agent handle "${h}" is already used by another of this owner's agents`,
+        409,
+        { error_code: 'agent_handle_taken' },
+      );
+    }
+    finalAgentHandle = h;
+  }
+
+  const full = finalOwnerHandle && finalAgentHandle ? `@${finalOwnerHandle}/${finalAgentHandle}` : null;
+  console.log(`[OACP] Handle claim by ${agent.name}: ${full ?? `owner=@${finalOwnerHandle ?? '—'} agent=${finalAgentHandle ?? '—'}`}`);
+  return jsonResponse({
+    owner_handle: finalOwnerHandle ? `@${finalOwnerHandle}` : null,
+    agent_handle: finalAgentHandle,
+    handle: full,
+  });
+}
+
+/**
+ * GET /resolve?handle=@owner or @owner/agent — public handle resolution.
+ */
+async function handleResolve(req: Request): Promise<Response> {
+  const url = new URL(req.url);
+  const raw = url.searchParams.get('handle');
+  if (!raw) return errorResponse('handle query parameter is required', 400);
+
+  const parts = raw.toLowerCase().replace(/^@/, '').split('/');
+  if (parts.length > 2 || !HANDLE_RE.test(parts[0]) || (parts[1] !== undefined && !HANDLE_RE.test(parts[1]))) {
+    return errorResponse('handle must look like @owner or @owner/agent', 400);
+  }
+  const [ownerPart, agentPart] = parts;
+
+  const supabase = getSupabaseAdmin();
+  const { data: owner } = await supabase
+    .from('owners')
+    .select('owner_id, handle, owner_public_key')
+    .eq('handle', ownerPart)
+    .maybeSingle();
+  if (!owner) return errorResponse(`Handle "@${ownerPart}" is not claimed`, 404);
+
+  let query = supabase
+    .from('agents')
+    .select('agent_id, name, handle, access_policy, description, capabilities, status, public_key, metadata, last_seen_at')
+    .eq('owner_id', owner.owner_id);
+  if (agentPart) query = query.eq('handle', agentPart);
+
+  const { data: agents } = await query;
+  if (agentPart && (!agents || agents.length === 0)) {
+    return errorResponse(`No agent "${agentPart}" under @${ownerPart}`, 404);
+  }
+
+  const cards = (agents || []).map((a) => ({
+    ...a,
+    handle: a.handle ? `@${owner.handle}/${a.handle}` : null,
+    owner_verified_handle: `@${owner.handle}`,
+    owner_public_key: owner.owner_public_key,
+  }));
+
+  return jsonResponse(
+    agentPart
+      ? { handle: raw, agent: cards[0] }
+      : { handle: `@${owner.handle}`, owner_public_key: owner.owner_public_key, agents: cards },
+  );
+}
+
+const FRIEND_CODE_CHARSET = 'ABCDEFGHJKMNPQRSTUVWXYZ23456789';
+
+/**
+ * POST /friends/code — mint a single-use pairing code (RFC 002 §3.1).
+ * Body: { agent_id }. Agent auth. 15-minute expiry.
+ */
+async function handleFriendCode(req: Request): Promise<Response> {
+  let body: Record<string, unknown>;
+  try {
+    body = await req.json();
+  } catch {
+    return errorResponse('Invalid JSON body', 400);
+  }
+
+  const auth = await requireAgentAuth(req, body.agent_id);
+  if ('error' in auth) return auth.error;
+
+  const bytes = crypto.getRandomValues(new Uint8Array(6));
+  const chars = Array.from(bytes).map((b) => FRIEND_CODE_CHARSET[b % FRIEND_CODE_CHARSET.length]);
+  const code = `${chars.slice(0, 3).join('')}-${chars.slice(3).join('')}`;
+  const expiresAt = new Date(Date.now() + 15 * 60 * 1000).toISOString();
+
+  const supabase = getSupabaseAdmin();
+  const { error } = await supabase.from('friend_codes').insert({
+    code,
+    issuer_agent_id: auth.agent.agent_id,
+    expires_at: expiresAt,
+  });
+  if (error) {
+    console.error('[OACP] Friend code insert error:', error);
+    return errorResponse('Failed to create friend code', 500);
+  }
+
+  return jsonResponse({
+    code,
+    expires_at: expiresAt,
+    note: 'Give this code to the other human out of band (text, call). Their agent redeems it with oacp_add_friend — that creates a mutual, key-pinned friendship. Single use.',
+  });
+}
+
+/** Canonical pair ordering for the friendships table. */
+function friendPair(a: string, b: string): { lo: string; hi: string } {
+  return a < b ? { lo: a, hi: b } : { lo: b, hi: a };
+}
+
+async function areFriends(agentA: string, agentB: string): Promise<boolean> {
+  const { lo, hi } = friendPair(agentA, agentB);
+  const supabase = getSupabaseAdmin();
+  const { data } = await supabase
+    .from('friendships')
+    .select('agent_lo')
+    .eq('agent_lo', lo)
+    .eq('agent_hi', hi)
+    .maybeSingle();
+  return !!data;
+}
+
+/**
+ * POST /friends/redeem — redeem a pairing code, creating the friendship.
+ * Body: { agent_id, code }. Agent auth.
+ */
+async function handleFriendRedeem(req: Request): Promise<Response> {
+  let body: Record<string, unknown>;
+  try {
+    body = await req.json();
+  } catch {
+    return errorResponse('Invalid JSON body', 400);
+  }
+
+  const auth = await requireAgentAuth(req, body.agent_id);
+  if ('error' in auth) return auth.error;
+  const redeemer = auth.agent;
+
+  if (typeof body.code !== 'string' || !/^[A-Za-z0-9-]{4,32}$/.test(body.code)) {
+    return errorResponse('code must be a valid friend code', 400);
+  }
+  const code = body.code.toUpperCase();
+
+  const supabase = getSupabaseAdmin();
+  const { data: fc } = await supabase
+    .from('friend_codes')
+    .select('code, issuer_agent_id, expires_at, redeemed_by_agent_id')
+    .eq('code', code)
+    .maybeSingle();
+
+  if (!fc) return errorResponse('Unknown friend code', 404);
+  if (fc.redeemed_by_agent_id) return errorResponse('Friend code already used', 409);
+  if (new Date(fc.expires_at).getTime() < Date.now()) return errorResponse('Friend code expired', 410);
+  if (fc.issuer_agent_id === redeemer.agent_id) {
+    return errorResponse('Cannot redeem your own friend code — give it to the other human', 400);
+  }
+
+  const { data: issuer } = await supabase
+    .from('agents')
+    .select('agent_id, name, handle, access_policy, public_key, status, last_seen_at, owner_id, owners:owner_id(handle, owner_public_key)')
+    .eq('agent_id', fc.issuer_agent_id)
+    .single();
+  if (!issuer) return errorResponse('Issuing agent no longer exists', 410);
+
+  const { lo, hi } = friendPair(issuer.agent_id, redeemer.agent_id);
+  const pinnedLo = lo === issuer.agent_id ? issuer.public_key : redeemer.public_key;
+  const pinnedHi = hi === issuer.agent_id ? issuer.public_key : redeemer.public_key;
+
+  const { error: fError } = await supabase.from('friendships').upsert(
+    { agent_lo: lo, agent_hi: hi, pinned_key_lo: pinnedLo, pinned_key_hi: pinnedHi },
+    { onConflict: 'agent_lo,agent_hi', ignoreDuplicates: true },
+  );
+  if (fError) {
+    console.error('[OACP] Friendship insert error:', fError);
+    return errorResponse('Failed to create friendship', 500);
+  }
+
+  await supabase
+    .from('friend_codes')
+    .update({ redeemed_by_agent_id: redeemer.agent_id, redeemed_at: new Date().toISOString() })
+    .eq('code', code);
+
+  // deno-lint-ignore no-explicit-any
+  const issuerOwner = issuer.owners as any;
+  console.log(`[OACP] Friendship: ${issuer.name} ⇄ ${redeemer.name} (code ${code})`);
+  return jsonResponse({
+    friend: {
+      agent_id: issuer.agent_id,
+      name: issuer.name,
+      handle: issuerOwner?.handle && issuer.handle ? `@${issuerOwner.handle}/${issuer.handle}` : null,
+      public_key: issuer.public_key,
+      access_policy: issuer.access_policy,
+      status: issuer.status,
+      owner_public_key: issuerOwner?.owner_public_key ?? null,
+    },
+    pinned_key: issuer.public_key,
+    note: 'Friendship established — both keys pinned. Pin this public_key locally; if it ever changes, verify with the human before trusting.',
+  });
+}
+
+/**
+ * GET /friends?agent_id= — list this agent's friendships. Agent auth.
+ */
+async function handleFriendsList(req: Request): Promise<Response> {
+  const url = new URL(req.url);
+  const auth = await requireAgentAuth(req, url.searchParams.get('agent_id'));
+  if ('error' in auth) return auth.error;
+  const me = auth.agent;
+
+  const supabase = getSupabaseAdmin();
+  const { data: edges } = await supabase
+    .from('friendships')
+    .select('agent_lo, agent_hi, pinned_key_lo, pinned_key_hi, created_at')
+    .or(`agent_lo.eq.${me.agent_id},agent_hi.eq.${me.agent_id}`);
+
+  const friends = [];
+  for (const e of edges || []) {
+    const friendId = e.agent_lo === me.agent_id ? e.agent_hi : e.agent_lo;
+    const pinnedKey = e.agent_lo === me.agent_id ? e.pinned_key_hi : e.pinned_key_lo;
+    const { data: card } = await supabase
+      .from('agents')
+      .select('agent_id, name, handle, access_policy, status, public_key, last_seen_at, owners:owner_id(handle)')
+      .eq('agent_id', friendId)
+      .single();
+    if (!card) continue;
+    // deno-lint-ignore no-explicit-any
+    const ownerJoin = card.owners as any;
+    friends.push({
+      agent_id: card.agent_id,
+      name: card.name,
+      handle: ownerJoin?.handle && card.handle ? `@${ownerJoin.handle}/${card.handle}` : null,
+      access_policy: card.access_policy,
+      status: card.status,
+      last_seen_at: card.last_seen_at,
+      pinned_key: pinnedKey,
+      current_key: card.public_key,
+      key_changed: pinnedKey !== card.public_key,
+      friends_since: e.created_at,
+    });
+  }
+
+  return jsonResponse({ friends, total: friends.length });
+}
+
+/**
+ * POST /agents/set-access — set this agent's access policy (RFC 002 §3.5).
+ * Body: { agent_id, access_policy: 'open' | 'closed' }. Agent auth.
+ */
+async function handleSetAccess(req: Request): Promise<Response> {
+  let body: Record<string, unknown>;
+  try {
+    body = await req.json();
+  } catch {
+    return errorResponse('Invalid JSON body', 400);
+  }
+
+  if (body.access_policy !== 'open' && body.access_policy !== 'closed') {
+    return errorResponse("access_policy must be 'open' or 'closed'", 400);
+  }
+
+  const auth = await requireAgentAuth(req, body.agent_id);
+  if ('error' in auth) return auth.error;
+
+  const supabase = getSupabaseAdmin();
+  const { error } = await supabase
+    .from('agents')
+    .update({ access_policy: body.access_policy })
+    .eq('agent_id', auth.agent.agent_id);
+  if (error) {
+    console.error('[OACP] Set access error:', error);
+    return errorResponse('Failed to update access policy', 500);
+  }
+
+  return jsonResponse({
+    agent_id: auth.agent.agent_id,
+    access_policy: body.access_policy,
+    note: body.access_policy === 'closed'
+      ? 'Closed: the registry now only accepts messages from friends (plus replies on threads this agent started). Mint codes with oacp_friend_code.'
+      : 'Open: anyone can message this agent; non-friends are rate limited per sender.',
+  });
+}
+
 /**
  * POST /messages/send — Send a message between agents
  *
@@ -690,12 +1102,53 @@ async function handleMessageSend(req: Request): Promise<Response> {
   // Verify recipient exists
   const { data: recipient, error: recipientError } = await supabase
     .from('agents')
-    .select('agent_id, name')
+    .select('agent_id, name, access_policy')
     .eq('agent_id', body.recipient_agent_id)
     .single();
 
   if (recipientError || !recipient) {
     return errorResponse('Recipient agent not found', 404);
+  }
+
+  // RFC 002 §3.5: access policy — closed agents accept friends only (with a
+  // reply carve-out for threads the closed agent started); open agents rate
+  // limit non-friends per sender-recipient pair.
+  const senderIsFriend = await areFriends(senderAgentId, recipient.agent_id);
+  if (!senderIsFriend) {
+    if (recipient.access_policy === 'closed') {
+      let replyAllowed = false;
+      if (body.correlation_id) {
+        const { data: prior } = await supabase
+          .from('messages')
+          .select('message_id')
+          .eq('correlation_id', body.correlation_id as string)
+          .eq('sender_agent_id', recipient.agent_id)
+          .eq('recipient_agent_id', senderAgentId)
+          .limit(1);
+        replyAllowed = !!prior && prior.length > 0;
+      }
+      if (!replyAllowed) {
+        return errorResponse(
+          `${recipient.name} only accepts messages from friends. Ask their human for a friend code, then redeem it (oacp_add_friend).`,
+          403,
+          { error_code: 'not_friends', access_policy: 'closed' },
+        );
+      }
+    } else {
+      const { data: pairAllowed } = await supabase.rpc('oacp_check_rate_limit', {
+        p_identifier: `pair:${senderAgentId}:${recipient.agent_id}`,
+        p_endpoint: '/messages/send-pair',
+        p_window_seconds: 3600,
+        p_max_requests: 20,
+      });
+      if (pairAllowed === false) {
+        return errorResponse(
+          'Rate limit exceeded for messages to this recipient (20/hour for non-friends). Establish a friendship (friend code) for unlimited messaging.',
+          429,
+          { error_code: 'pair_rate_limited' },
+        );
+      }
+    }
   }
 
   // RFC 001: visibility tier — validated here, applied at thread creation below
@@ -1827,6 +2280,24 @@ const routes: Record<string, Record<string, RouteHandler>> = {
   },
   '/owners/attach': {
     POST: (req) => handleOwnersAttach(req),
+  },
+  '/handles/claim': {
+    POST: (req) => handleHandlesClaim(req),
+  },
+  '/resolve': {
+    GET: (req) => handleResolve(req),
+  },
+  '/friends/code': {
+    POST: (req) => handleFriendCode(req),
+  },
+  '/friends/redeem': {
+    POST: (req) => handleFriendRedeem(req),
+  },
+  '/friends': {
+    GET: (req) => handleFriendsList(req),
+  },
+  '/agents/set-access': {
+    POST: (req) => handleSetAccess(req),
   },
   '/discover': {
     GET: (req) => handleDiscover(req),

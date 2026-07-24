@@ -47,6 +47,13 @@ import {
   type TrustPolicy,
   type ValidationResult,
 } from './trust.js';
+import {
+  saveContact,
+  getContact,
+  checkPin,
+  loadContacts,
+  type Contact,
+} from './contacts.js';
 import type {
   RegisterResponse,
   ReregisterResponse,
@@ -92,6 +99,9 @@ export class OACPAgent {
   private dailyTokensServed = 0;
   private limitResetDate = new Date().toDateString();
 
+  // Contacts file (RFC 002 §3): local pinned-key address book
+  private contactsPath!: string;
+
   constructor(config: AgentConfig) {
     this.config = config;
 
@@ -106,6 +116,10 @@ export class OACPAgent {
     const ownerPath = config.ownerKeypairPath
       || keypairPath.replace(/[^/\\]+$/, 'owner-keypair.json');
     this.ownerKeypair = loadOrCreateKeypair(ownerPath);
+
+    // Contacts (RFC 002 §3): pinned counterparty keys, beside the keypair
+    this.contactsPath = config.contactsPath
+      || keypairPath.replace(/[^/\\]+$/, 'contacts.json');
 
     // Set API base URL
     const supabaseUrl = config.supabaseUrl || OACP_PUBLIC_REGISTRY_URL;
@@ -607,6 +621,13 @@ export class OACPAgent {
         throw new Error(
           `[OACP] Cannot seal: no public key found for recipient ${recipientId}`,
         );
+      }
+      // Key-pin check (RFC 002 §3): never seal to a key that contradicts
+      // the pinned one — that would hand the plaintext to whoever now
+      // controls the registration.
+      const pinWarning = checkPin(this.contactsPath, recipientId, recipientCard.public_key);
+      if (pinWarning) {
+        throw new Error(`[OACP] ${pinWarning}`);
       }
       // Owner slots: both humans can decrypt their agents' sealed threads
       // (RFC 001 §3.1 / RFC 003). Prefer the account owner key (one key
@@ -1175,6 +1196,157 @@ export class OACPAgent {
 
     // deno-lint-ignore no-explicit-any
     return (await response.json()) as any;
+  }
+
+  // ============================================================
+  // Handles & Friendships (RFC 002)
+  // ============================================================
+
+  /** Authenticated POST helper for RFC 002 endpoints. */
+  private async apiPost(pathname: string, body: Record<string, unknown>): Promise<any> {
+    if (!this.agentId || !this.registryToken) {
+      throw new Error('Agent must be registered first');
+    }
+    const response = await fetch(`${this.apiBaseUrl}${pathname}`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${this.registryToken}`,
+      },
+      body: JSON.stringify({ agent_id: this.agentId, ...body }),
+    });
+    if (!response.ok) {
+      const error = (await response.json()) as ApiError;
+      throw new Error(`${pathname} failed (${response.status}): ${error.error}`);
+    }
+    return response.json();
+  }
+
+  /**
+   * Claim the owner's handle and/or this agent's handle (RFC 002 §2).
+   * Requires an attached owner account (RFC 003). Handles resolve as
+   * @owner/agent via resolveHandle().
+   */
+  async claimHandle(opts: { ownerHandle?: string; agentHandle?: string }): Promise<{
+    owner_handle: string | null;
+    agent_handle: string | null;
+    handle: string | null;
+  }> {
+    return this.apiPost('/handles/claim', {
+      ...(opts.ownerHandle !== undefined ? { owner_handle: opts.ownerHandle } : {}),
+      ...(opts.agentHandle !== undefined ? { agent_handle: opts.agentHandle } : {}),
+    });
+  }
+
+  /**
+   * Resolve @owner (owner record + agent cards) or @owner/agent (one card).
+   * Public — no auth required.
+   */
+  async resolveHandle(handle: string): Promise<any> {
+    const response = await fetch(
+      `${this.apiBaseUrl}/resolve?handle=${encodeURIComponent(handle)}`,
+    );
+    if (!response.ok) {
+      const error = (await response.json()) as ApiError;
+      throw new Error(`Resolve failed (${response.status}): ${error.error}`);
+    }
+    return response.json();
+  }
+
+  /**
+   * Mint a single-use friend code (RFC 002 §3.1). Give it to the other
+   * human out of band; their agent redeems it with addFriend().
+   */
+  async mintFriendCode(): Promise<{ code: string; expires_at: string; note: string }> {
+    return this.apiPost('/friends/code', {});
+  }
+
+  /**
+   * Redeem a friend code: creates the mutual friendship on the registry and
+   * pins the friend's key in the local contacts file.
+   */
+  async addFriend(code: string, note?: string): Promise<Contact> {
+    const result = await this.apiPost('/friends/redeem', { code });
+    const contact: Contact = {
+      agent_id: result.friend.agent_id,
+      public_key: result.friend.public_key,
+      handle: result.friend.handle,
+      name: result.friend.name,
+      note,
+      pinned_at: new Date().toISOString(),
+      via: 'code',
+    };
+    saveContact(this.contactsPath, contact);
+    console.log(`[OACP] Friend added: ${contact.name} (${contact.handle ?? contact.agent_id}) — key pinned`);
+    return contact;
+  }
+
+  /**
+   * Pin an agent's current key without a friend code (TOFU — weaker than a
+   * code: trusts the registry's answer once). Resolves a handle or fetches
+   * a card by agent_id.
+   */
+  async pinContact(handleOrAgentId: string, note?: string): Promise<Contact> {
+    let card: Record<string, any> | null;
+    if (handleOrAgentId.startsWith('@')) {
+      const resolved = await this.resolveHandle(handleOrAgentId);
+      card = resolved.agent ?? null;
+    } else {
+      card = (await this.getAgentCard(handleOrAgentId)) as Record<string, any> | null;
+    }
+    if (!card?.public_key) {
+      throw new Error(`[OACP] Cannot pin: no card/key found for ${handleOrAgentId}`);
+    }
+    const existing = getContact(this.contactsPath, card.agent_id as string);
+    if (existing && existing.public_key !== card.public_key) {
+      throw new Error(
+        `[OACP] ${checkPin(this.contactsPath, card.agent_id as string, card.public_key as string)}`,
+      );
+    }
+    const contact: Contact = {
+      agent_id: card.agent_id as string,
+      public_key: card.public_key as string,
+      handle: (card.handle as string) ?? null,
+      name: card.name as string,
+      note,
+      pinned_at: new Date().toISOString(),
+      via: 'tofu',
+    };
+    saveContact(this.contactsPath, contact);
+    return contact;
+  }
+
+  /** Local pinned contacts (RFC 002 §3). */
+  contacts(): Record<string, Contact> {
+    return loadContacts(this.contactsPath);
+  }
+
+  /**
+   * Registry friendship edges for this agent, with key-change flags
+   * (pinned-at-establishment vs current registry key).
+   */
+  async listFriends(): Promise<{ friends: any[]; total: number }> {
+    if (!this.agentId || !this.registryToken) {
+      throw new Error('Agent must be registered first');
+    }
+    const response = await fetch(
+      `${this.apiBaseUrl}/friends?agent_id=${this.agentId}`,
+      { headers: { Authorization: `Bearer ${this.registryToken}` } },
+    );
+    if (!response.ok) {
+      const error = (await response.json()) as ApiError;
+      throw new Error(`List friends failed (${response.status}): ${error.error}`);
+    }
+    return (await response.json()) as { friends: any[]; total: number };
+  }
+
+  /**
+   * Set this agent's access policy (RFC 002 §3.5): 'open' accepts messages
+   * from anyone (non-friends rate limited); 'closed' accepts friends only,
+   * enforced by the registry.
+   */
+  async setAccessPolicy(policy: 'open' | 'closed'): Promise<{ agent_id: string; access_policy: string; note: string }> {
+    return this.apiPost('/agents/set-access', { access_policy: policy });
   }
 
   // ============================================================

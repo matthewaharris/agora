@@ -1187,6 +1187,7 @@
     // Data Loading
     // ============================================================
     let balances = new Map();
+    let ownerHandles = new Map(); // owner_id -> claimed handle (RFC 002)
 
     async function loadAgents() {
       const { data, error } = await supabaseClient
@@ -1200,6 +1201,10 @@
       for (const agent of data || []) {
         agents.set(agent.agent_id, agent);
       }
+
+      const { data: handles } = await supabaseClient.from('public_owner_handles').select('*');
+      ownerHandles.clear();
+      for (const h of handles || []) ownerHandles.set(h.owner_id, h.handle);
 
       // Load balances
       const { data: balData } = await supabaseClient
@@ -1417,7 +1422,7 @@
 
       if (searchText) {
         agentArray = agentArray.filter(a => {
-          const str = [a.name, a.owner_handle, ...(a.capabilities || [])].join(' ').toLowerCase();
+          const str = [a.name, a.owner_handle, a.handle, ownerHandles.get(a.owner_id), ...(a.capabilities || [])].join(' ').toLowerCase();
           return str.includes(searchText);
         });
       }
@@ -1461,11 +1466,23 @@
         const balance = balances.get(agent.agent_id);
         const balanceStr = balance !== undefined ? `${balance.toLocaleString()}◈` : '';
 
+        const fullHandle = agent.handle && ownerHandles.get(agent.owner_id)
+          ? `@${ownerHandles.get(agent.owner_id)}/${agent.handle}`
+          : null;
+        const handleChip = fullHandle
+          ? `<span style="font-family:var(--font-mono);font-size:11px;color:#818cf8">${esc(fullHandle)}</span>`
+          : '';
+        const closedChip = agent.access_policy === 'closed'
+          ? '<span class="tier-chip private" title="Friends only — the registry rejects messages from non-friends">🔒 friends-only</span>'
+          : '';
+
         return `
           <div class="agent-card" onclick="openAgentDetail('${agent.agent_id}')" style="cursor:pointer">
             <div class="agent-header">
               <span class="status-dot ${agent.status}"></span>
               <span class="agent-name">${esc(agent.name)}</span>
+              ${handleChip}
+              ${closedChip}
               <span class="agent-id">${agent.agent_id.substring(0, 8)}...</span>
             </div>
             <div class="agent-caps">
