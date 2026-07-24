@@ -55,6 +55,15 @@ const RATE_LIMITS: Record<string, { window: number; max: number }> = {
   '/collect-payment': { window: 60, max: 30 },
   '/credit-work': { window: 60, max: 30 },
   '/transfer': { window: 60, max: 20 },
+  // State-changing endpoints — throttle brute force / abuse
+  '/owners/attach': { window: 60, max: 10 },
+  '/agents/set-access': { window: 60, max: 20 },
+  '/teams/create': { window: 60, max: 10 },
+  '/teams/add-member': { window: 60, max: 20 },
+  '/webhooks/register': { window: 60, max: 10 },
+  '/escrow/hold': { window: 60, max: 30 },
+  '/escrow/release': { window: 60, max: 30 },
+  '/escrow/refund': { window: 60, max: 30 },
 };
 
 /**
@@ -154,6 +163,42 @@ function extractBearerToken(req: Request): string | null {
   if (!auth) return null;
   const match = auth.match(/^Bearer\s+(.+)$/i);
   return match ? match[1] : null;
+}
+
+/**
+ * Validate a webhook callback URL against SSRF. Returns an error string, or
+ * null if acceptable. Requires https and rejects hosts that are literally
+ * loopback/link-local/private/internal by name. (Full protection also needs
+ * resolve-time IP checks at delivery; this is the registration-time gate.)
+ */
+function validateCallbackUrl(raw: string): string | null {
+  let u: URL;
+  try {
+    u = new URL(raw);
+  } catch {
+    return 'callback_url must be a valid absolute URL';
+  }
+  if (u.protocol !== 'https:') return 'callback_url must use https';
+  const host = u.hostname.toLowerCase();
+  if (
+    host === 'localhost' ||
+    host === '0.0.0.0' ||
+    host === '::1' ||
+    host.endsWith('.localhost') ||
+    host.endsWith('.internal') ||
+    host.endsWith('.local') ||
+    /^127\./.test(host) ||
+    /^10\./.test(host) ||
+    /^192\.168\./.test(host) ||
+    /^172\.(1[6-9]|2[0-9]|3[0-1])\./.test(host) ||
+    /^169\.254\./.test(host) ||
+    /^fe80:/i.test(host) ||
+    /^fc00:/i.test(host) ||
+    /^fd[0-9a-f]{2}:/i.test(host)
+  ) {
+    return 'callback_url may not point to a private, loopback, or link-local address';
+  }
+  return null;
 }
 
 /**
@@ -1956,6 +2001,13 @@ async function handleRegisterWebhook(req: Request): Promise<Response> {
   const errors = validateRequired(body, ['callback_url']);
   if (errors.length > 0) return validationErrorResponse(errors);
 
+  // SSRF hardening: a callback_url the registry will later POST to must be
+  // a public https endpoint. Reject non-https and any host that resolves to
+  // loopback/link-local/private space by name. (Delivery is not yet wired;
+  // this closes the vector before it ships.)
+  const urlError = validateCallbackUrl(body.callback_url as string);
+  if (urlError) return errorResponse(urlError, 400, { error_code: 'invalid_callback_url' });
+
   const token = extractBearerToken(req);
   if (!token) return errorResponse('Authorization required', 401);
 
@@ -2027,14 +2079,50 @@ async function handleEscrowHold(req: Request): Promise<Response> {
   return jsonResponse({ escrow_id: escrowId, status: 'held', amount: body.amount }, 201);
 }
 
+/**
+ * Authenticate the caller by registry token and confirm they are a
+ * participant (requester or provider) of the escrow. Prevents a third
+ * party from releasing/refunding escrows they have nothing to do with.
+ */
+async function authEscrowParticipant(
+  req: Request,
+  escrowId: unknown,
+  // deno-lint-ignore no-explicit-any
+): Promise<{ escrow: any } | { error: Response }> {
+  if (!escrowId || typeof escrowId !== 'string') {
+    return { error: errorResponse('escrow_id is required', 400) };
+  }
+  const token = extractBearerToken(req);
+  if (!token) return { error: errorResponse('Authorization required', 401) };
+
+  const supabase = getSupabaseAdmin();
+  const tokenHash = await hashToken(token);
+  const { data: agent } = await supabase
+    .from('agents')
+    .select('agent_id')
+    .eq('registry_token', tokenHash)
+    .single();
+  if (!agent) return { error: errorResponse('Unauthorized', 403) };
+
+  const { data: escrow } = await supabase
+    .from('escrow')
+    .select('id, requester_id, provider_id, status')
+    .eq('id', escrowId)
+    .single();
+  if (!escrow) return { error: errorResponse('Escrow not found', 404) };
+
+  if (agent.agent_id !== escrow.requester_id && agent.agent_id !== escrow.provider_id) {
+    return { error: errorResponse('Only the requester or provider of this escrow may resolve it', 403, { error_code: 'not_escrow_participant' }) };
+  }
+  return { escrow };
+}
+
 async function handleEscrowRelease(req: Request): Promise<Response> {
   let body: Record<string, unknown>;
   try { body = await req.json(); } catch { return errorResponse('Invalid JSON', 400); }
 
-  if (!body.escrow_id) return errorResponse('escrow_id is required', 400);
-
-  const token = extractBearerToken(req);
-  if (!token) return errorResponse('Authorization required', 401);
+  const auth = await authEscrowParticipant(req, body.escrow_id);
+  if ('error' in auth) return auth.error;
 
   const supabase = getSupabaseAdmin();
   const { error } = await supabase.rpc('oacp_escrow_release', { p_escrow_id: body.escrow_id });
@@ -2048,10 +2136,8 @@ async function handleEscrowRefund(req: Request): Promise<Response> {
   let body: Record<string, unknown>;
   try { body = await req.json(); } catch { return errorResponse('Invalid JSON', 400); }
 
-  if (!body.escrow_id) return errorResponse('escrow_id is required', 400);
-
-  const token = extractBearerToken(req);
-  if (!token) return errorResponse('Authorization required', 401);
+  const auth = await authEscrowParticipant(req, body.escrow_id);
+  if ('error' in auth) return auth.error;
 
   const supabase = getSupabaseAdmin();
   const { error } = await supabase.rpc('oacp_escrow_refund', { p_escrow_id: body.escrow_id });
