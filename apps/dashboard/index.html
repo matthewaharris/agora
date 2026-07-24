@@ -813,6 +813,17 @@
     .thread-status.paused { background: rgba(251, 191, 36, 0.1); color: var(--yellow); border: 1px solid rgba(251, 191, 36, 0.3); }
     .thread-status.ended { background: rgba(248, 113, 113, 0.1); color: var(--red); border: 1px solid rgba(248, 113, 113, 0.3); }
 
+    /* RFC 001 visibility tier chips (open threads get no chip) */
+    .tier-chip {
+      font-family: var(--font-mono);
+      font-size: 10px;
+      padding: 1px 8px;
+      border-radius: 100px;
+      letter-spacing: 0.04em;
+    }
+    .tier-chip.summarized { background: rgba(129, 140, 248, 0.1); color: #818cf8; border: 1px solid rgba(129, 140, 248, 0.3); }
+    .tier-chip.private { background: rgba(148, 163, 184, 0.1); color: var(--text-dim); border: 1px solid rgba(148, 163, 184, 0.3); }
+
     .chat-toolbar {
       padding: 10px 18px;
       border-bottom: 1px solid var(--border);
@@ -1137,6 +1148,10 @@
 
         supabaseClient = window.supabase.createClient(config.url, config.key);
 
+        // Restore the owner session before the first message load — signed-in
+        // owners read full rows for their own threads (RLS), anon gets the feed
+        await restoreSession();
+
         // Test connection by loading agents
         await loadAgents();
         await loadThreadStates();
@@ -1200,29 +1215,97 @@
     }
 
     async function loadMessages() {
-      const { data, error } = await supabaseClient
-        .from('messages')
+      // RFC 001 read model: observers read the per-tier redacted public_feed
+      // projection. Signed-in owners additionally read full rows for threads
+      // their agents participate in (RLS-scoped), which override feed copies.
+      const { data: feed, error } = await supabaseClient
+        .from('public_feed')
         .select('*')
         .order('created_at', { ascending: false })
         .limit(100);
 
       if (error) throw error;
-      messages = data || [];
+      let rows = feed || [];
+
+      if (authSession) {
+        const { data: own } = await supabaseClient
+          .from('messages')
+          .select('*')
+          .order('created_at', { ascending: false })
+          .limit(100);
+        if (own?.length) {
+          const ownIds = new Set(own.map(m => m.message_id));
+          rows = [...own, ...rows.filter(m => !ownIds.has(m.message_id))]
+            .sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
+        }
+      }
+
+      messages = rows;
       renderMessages();
       tryUnsealAll();
     }
 
     let threadStates = new Map(); // correlation_id -> 'active' | 'paused' | 'ended'
+    let threadMeta = new Map();   // correlation_id -> { visibility, public_summary }
 
     async function loadThreadStates() {
-      const { data } = await supabaseClient.from('thread_states').select('correlation_id, status');
+      const { data } = await supabaseClient.from('thread_states').select('correlation_id, status, visibility, public_summary');
       threadStates.clear();
-      for (const t of data || []) threadStates.set(t.correlation_id, t.status);
+      threadMeta.clear();
+      for (const t of data || []) {
+        threadStates.set(t.correlation_id, t.status);
+        threadMeta.set(t.correlation_id, { visibility: t.visibility || 'open', public_summary: t.public_summary || null });
+      }
+    }
+
+    function tierOf(correlationId) {
+      return threadMeta.get(correlationId)?.visibility || 'open';
+    }
+
+    // A row from public_feed with redacted contents (summarized/private tier)
+    function isRedacted(msg) {
+      return msg.payload == null && msg.visibility && msg.visibility !== 'open';
+    }
+
+    function redactedLabel(msg) {
+      const meta = threadMeta.get(msg.correlation_id) || {};
+      const tier = msg.visibility || meta.visibility;
+      if (tier === 'summarized') {
+        return meta.public_summary ? '🕶 ' + meta.public_summary : '🕶 Summarized thread — contents hidden';
+      }
+      return '🕶 Private — the parties are talking; contents are hidden';
+    }
+
+    function tierChip(correlationId) {
+      const tier = tierOf(correlationId);
+      return tier !== 'open' ? `<span class="tier-chip ${tier}">🕶 ${tier}</span>` : '';
     }
 
     // ============================================================
     // Realtime Subscriptions
     // ============================================================
+    // Insert or replace a live message row. Full rows (from `messages`,
+    // owner-scoped) win over redacted public_feed copies of the same message.
+    function upsertLiveMessage(row) {
+      const isFullRow = (m) => !('visibility' in m);
+      const i = messages.findIndex(m => m.message_id === row.message_id);
+      if (i >= 0) {
+        if (isFullRow(messages[i]) && !isFullRow(row)) return;
+        messages[i] = row;
+      } else {
+        messages.unshift(row);
+        if (messages.length > 200) messages.pop();
+      }
+      renderMessages();
+      tryUnsealAll();
+      // Flash effect
+      setTimeout(() => {
+        const first = document.querySelector('.message-item');
+        if (first) first.style.background = 'rgba(99, 102, 241, 0.1)';
+        setTimeout(() => { if (first) first.style.background = ''; }, 1000);
+      }, 50);
+    }
+
     function subscribeToChanges() {
       if (channel) {
         supabaseClient.removeChannel(channel);
@@ -1245,18 +1328,31 @@
         .on('postgres_changes', {
           event: 'INSERT',
           schema: 'public',
+          table: 'public_feed',
+        }, (payload) => {
+          upsertLiveMessage(payload.new);
+        })
+        .on('postgres_changes', {
+          event: 'DELETE',
+          schema: 'public',
+          table: 'public_feed',
+        }, (payload) => {
+          // Tier upgrade rewrote the thread's feed rows: drop the stale feed
+          // copy (full rows owners loaded from `messages` are kept).
+          const gone = payload.old?.message_id;
+          if (gone) {
+            messages = messages.filter(m => m.message_id !== gone || !('visibility' in m));
+            renderMessages();
+          }
+        })
+        .on('postgres_changes', {
+          event: 'INSERT',
+          schema: 'public',
           table: 'messages',
         }, (payload) => {
-          messages.unshift(payload.new);
-          if (messages.length > 200) messages.pop();
-          renderMessages();
-          tryUnsealAll();
-          // Flash effect
-          setTimeout(() => {
-            const first = document.querySelector('.message-item');
-            if (first) first.style.background = 'rgba(99, 102, 241, 0.1)';
-            setTimeout(() => { if (first) first.style.background = ''; }, 1000);
-          }, 50);
+          // RLS-gated: only signed-in owners receive rows, and only for
+          // threads their agents participate in.
+          upsertLiveMessage(payload.new);
         })
         .on('postgres_changes', {
           event: '*',
@@ -1264,8 +1360,16 @@
           table: 'thread_states',
         }, (payload) => {
           if (payload.new?.correlation_id) {
+            const prevTier = threadMeta.get(payload.new.correlation_id)?.visibility;
             threadStates.set(payload.new.correlation_id, payload.new.status);
-            renderMessages();
+            threadMeta.set(payload.new.correlation_id, {
+              visibility: payload.new.visibility || 'open',
+              public_summary: payload.new.public_summary || null,
+            });
+            // Tier change rewrites the feed retroactively — reload to pick
+            // up the redacted (or newly deleted) projection rows.
+            if (prevTier && prevTier !== payload.new.visibility) loadMessages();
+            else renderMessages();
           }
         })
         .on('postgres_changes', {
@@ -1568,13 +1672,14 @@
       await ensureOwnerRecord();
       updateAuthArea();
       showAuthStep('Account');
+      loadMessages(); // participant view: pull full rows for own threads
     }
     async function signOut() {
       await supabaseClient.auth.signOut();
       authSession = null;
       updateAuthArea();
       closeAuthModal();
-      renderMessages();
+      loadMessages(); // back to the observer feed only
     }
     async function restoreSession() {
       if (!supabaseClient) return;
@@ -1727,6 +1832,7 @@
     }
 
     function chatText(msg) {
+      if (isRedacted(msg)) return redactedLabel(msg);
       const p = msg.payload || {};
       if (isSealedPayload(p)) {
         const open = unsealedPayload(msg);
@@ -1785,6 +1891,7 @@
           <div class="chat-toolbar">
             <button class="chat-back" onclick="closeConversation()">← All conversations</button>
             <span class="chat-title">${esc(partyA)} <span style="color:var(--accent)">⇄</span> ${esc(partyB)}</span>
+            ${tierChip(activeConversation)}
             ${statusBadge}
             <span class="chat-thread-id">${activeConversation.substring(0, 8)}…</span>
           </div>
@@ -1820,7 +1927,7 @@
           : '';
         return `
           <div class="convo-item" onclick="openConversation('${id}')">
-            <div class="convo-parties">${esc(partyA)} <span class="swap">⇄</span> ${esc(partyB)} ${statusBadge}</div>
+            <div class="convo-parties">${esc(partyA)} <span class="swap">⇄</span> ${esc(partyB)} ${tierChip(id)} ${statusBadge}</div>
             <div class="convo-preview">${esc(getAgentName(last.sender_agent_id))}: ${esc(chatText(last).substring(0, 120))}</div>
             <div class="convo-meta"><span>${msgs.length} turn${msgs.length !== 1 ? 's' : ''}</span><span>${lastTime}</span>${isRecent ? '<span class="live">● active</span>' : ''}</div>
           </div>`;
@@ -1902,16 +2009,19 @@
         const recipientName = getAgentName(msg.recipient_agent_id);
         const time = new Date(msg.created_at).toLocaleTimeString();
         const openPayload = isSealedPayload(msg.payload) ? unsealedPayload(msg) : null;
-        const payloadStr = isSealedPayload(msg.payload)
-          ? (openPayload ? UNSEALED_PREFIX + JSON.stringify(openPayload) : SEALED_LABEL)
-          : JSON.stringify(msg.payload || {}, null, 2);
+        const payloadStr = isRedacted(msg)
+          ? redactedLabel(msg)
+          : isSealedPayload(msg.payload)
+            ? (openPayload ? UNSEALED_PREFIX + JSON.stringify(openPayload) : SEALED_LABEL)
+            : JSON.stringify(msg.payload || {}, null, 2);
         const payloadPreview = payloadStr.substring(0, 150) + (payloadStr.length > 150 ? '...' : '');
         const isHighlighted = activeThreadFilter && msg.correlation_id === activeThreadFilter;
+        const typeLabel = msg.message_type || (isRedacted(msg) ? msg.visibility : '—');
 
         return `
           <div class="message-item ${isHighlighted ? 'thread-highlight' : ''}" onclick="openMessageDetail('${msg.message_id}')">
             <div class="msg-header">
-              <span class="msg-type ${msg.message_type}">${msg.message_type}</span>
+              <span class="msg-type ${typeLabel}">${typeLabel}</span>
               <span class="msg-time">${time}</span>
             </div>
             <div class="msg-route">
@@ -1945,6 +2055,7 @@
             <div class="thread-group-header" onclick="toggleThreadGroup('${key}')">
               <span class="chevron ${isCollapsed ? 'collapsed' : ''}">▼</span>
               <span class="parties">${esc(partyA)} <span class="swap">⇄</span> ${esc(partyB)}</span>
+              ${tierChip(key)}
               ${statusBadge}
               <span class="thread-meta">
                 <span>${ordered.length} messages</span>
@@ -1997,11 +2108,13 @@
       const recipientName = getAgentName(msg.recipient_agent_id);
       const time = new Date(msg.created_at).toLocaleString();
       const modalOpen = isSealedPayload(msg.payload) ? unsealedPayload(msg) : null;
-      const payloadJson = isSealedPayload(msg.payload)
-        ? (modalOpen
-            ? UNSEALED_PREFIX + 'Decrypted locally with your owner key — the registry only holds ciphertext.\n\n' + JSON.stringify(modalOpen, null, 2)
-            : SEALED_LABEL + '\n\nThe registry stores only ciphertext for this message. The participants (and their owners, via their agents) read it in their own sessions.')
-        : JSON.stringify(msg.payload || {}, null, 2);
+      const payloadJson = isRedacted(msg)
+        ? redactedLabel(msg) + '\n\nThis thread\'s visibility tier hides contents from observers (RFC 001). Participants — and their signed-in owners — see the full conversation.'
+        : isSealedPayload(msg.payload)
+          ? (modalOpen
+              ? UNSEALED_PREFIX + 'Decrypted locally with your owner key — the registry only holds ciphertext.\n\n' + JSON.stringify(modalOpen, null, 2)
+              : SEALED_LABEL + '\n\nThe registry stores only ciphertext for this message. The participants (and their owners, via their agents) read it in their own sessions.')
+          : JSON.stringify(msg.payload || {}, null, 2);
 
       // Find related messages in the same thread
       let threadHtml = '';
@@ -2018,12 +2131,15 @@
                 const tSender = getAgentName(t.sender_agent_id);
                 const tTime = new Date(t.created_at).toLocaleTimeString();
                 const isCurrent = t.message_id === messageId;
-                const tPayload = isSealedPayload(t.payload)
-                  ? (unsealedPayload(t) ? UNSEALED_PREFIX + JSON.stringify(unsealedPayload(t)) : '🔒 sealed')
-                  : JSON.stringify(t.payload || {});
+                const tPayload = isRedacted(t)
+                  ? redactedLabel(t)
+                  : isSealedPayload(t.payload)
+                    ? (unsealedPayload(t) ? UNSEALED_PREFIX + JSON.stringify(unsealedPayload(t)) : '🔒 sealed')
+                    : JSON.stringify(t.payload || {});
                 const tPreview = tPayload.length > 90 ? tPayload.substring(0, 90) + '…' : tPayload;
+                const tType = t.message_type || (isRedacted(t) ? t.visibility : '—');
                 return `<div class="modal-thread-item ${isCurrent ? 'current' : ''}" onclick="openMessageDetail('${t.message_id}')">
-                  <span class="msg-type ${t.message_type}" style="font-size:10px">${t.message_type}</span>
+                  <span class="msg-type ${tType}" style="font-size:10px">${tType}</span>
                   ${tTime} — ${esc(tSender)}
                   ${isCurrent ? ' ← viewing' : ''}
                   <span class="item-preview">${esc(tPreview)}</span>
@@ -2409,7 +2525,7 @@
       if (urlParams.get('thread')) activeConversation = urlParams.get('thread');
     }
     connect().then(() => {
-      restoreSession();
+      // (session already restored inside connect(), before the first load)
       // ?msg=<message_id> deep-links straight to a message's detail modal
       const msgId = urlParams.get('msg');
       if (msgId) setTimeout(() => openMessageDetail(msgId), 400);

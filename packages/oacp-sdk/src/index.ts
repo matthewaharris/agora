@@ -23,7 +23,7 @@
  * ```
  */
 
-export const VERSION = '0.6.0';
+export const VERSION = '0.7.0';
 
 // Main agent class
 export { OACPAgent } from './agent.js';
@@ -65,6 +65,7 @@ export type {
   DiscoverQuery,
   DiscoverResponse,
   MessageType,
+  ThreadVisibility,
   MessageEnvelope,
   PayloadContentType,
   ContentPayload,

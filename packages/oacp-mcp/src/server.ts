@@ -167,7 +167,7 @@ export function buildServer(): { server: McpServer; shutdown: () => Promise<void
     return agent;
   }
 
-  const server = new McpServer({ name: 'oacp', version: '0.5.0' });
+  const server = new McpServer({ name: 'oacp', version: '0.6.0' });
 
   // ----------------------------------------------------------
   // oacp_register
@@ -332,9 +332,22 @@ export function buildServer(): { server: McpServer; shutdown: () => Promise<void
           .describe(
             'End-to-end encrypt the payload (RFC 001 sealed payloads): only the recipient and this agent can read it — the registry relays ciphertext. Use for confidential content. The envelope (sender, recipient, type, thread) stays visible for routing and the kill switch.',
           ),
+        visibility: z
+          .enum(['open', 'summarized', 'private', 'secret'])
+          .optional()
+          .describe(
+            "Thread visibility tier (RFC 001), applied when this message STARTS a new thread: 'open' = fully public (default), 'summarized' = observers see parties + a public_summary abstract but no contents, 'private' = observers see only that the parties are talking, 'secret' = thread invisible to observers. Participants always see everything. Can only move toward more private later. A sealed first message defaults to 'private'.",
+          ),
+        public_summary: z
+          .string()
+          .max(200)
+          .optional()
+          .describe(
+            "Self-declared public abstract of the thread (≤200 chars) shown to observers on 'summarized' threads, e.g. \"planning a joint research session\". Keep it honest; refresh with oacp_thread_control when the topic shifts.",
+          ),
       },
     },
-    async ({ recipient_agent_id, message_type, payload, correlation_id, seal }) => {
+    async ({ recipient_agent_id, message_type, payload, correlation_id, seal, visibility, public_summary }) => {
       try {
         const a = await requireRegistered();
         // Every message gets a correlation_id so both sides can track the
@@ -344,12 +357,13 @@ export function buildServer(): { server: McpServer; shutdown: () => Promise<void
           recipient_agent_id,
           message_type as MessageType,
           payload as Record<string, unknown>,
-          { correlationId: threadId, seal },
+          { correlationId: threadId, seal, visibility, publicSummary: public_summary },
         );
         return jsonResult({
           message_id: messageId,
           correlation_id: threadId,
           ...(seal ? { sealed: true } : {}),
+          ...(visibility ? { visibility } : {}),
           note:
             (seal ? 'Sent sealed — payload is end-to-end encrypted; the registry cannot read it. ' : '') +
             (message_type === 'task_request'
@@ -554,18 +568,46 @@ export function buildServer(): { server: McpServer; shutdown: () => Promise<void
         'Control a conversation thread (correlation_id) on the registry — the human-oversight kill switch. ' +
         "'pause' blocks all further messages on the thread until 'resume'; 'end' shuts it down permanently (cannot be reactivated). " +
         'Only participants of the thread can control it. The registry rejects sends on paused/ended threads, so this stops the OTHER agent too, not just this one. ' +
-        "Use when the human asks to stop/pause a conversation, or proactively when a conversation seems to need human review. 'status' just reports the current state.",
+        "Use when the human asks to stop/pause a conversation, or proactively when a conversation seems to need human review. 'status' just reports the current state. " +
+        "'set_visibility' upgrades the thread's RFC 001 tier (open → summarized → private → secret; downgrades are rejected). 'set_summary' updates the public abstract shown to observers on summarized threads — refresh it when the topic shifts.",
       inputSchema: {
         correlation_id: z.string().describe('The conversation thread to control'),
-        action: z.enum(['pause', 'resume', 'end', 'status']).describe('pause | resume | end (final) | status (read-only)'),
+        action: z
+          .enum(['pause', 'resume', 'end', 'status', 'set_visibility', 'set_summary'])
+          .describe('pause | resume | end (final) | status (read-only) | set_visibility (more private only) | set_summary'),
+        visibility: z
+          .enum(['open', 'summarized', 'private', 'secret'])
+          .optional()
+          .describe("Required for action 'set_visibility': the new tier (must be more private than the current one)"),
+        public_summary: z
+          .string()
+          .max(200)
+          .optional()
+          .describe("Required for action 'set_summary': the new public abstract (≤200 chars)"),
       },
     },
-    async ({ correlation_id, action }) => {
+    async ({ correlation_id, action, visibility, public_summary }) => {
       try {
         const a = await requireRegistered();
         if (action === 'status') {
           const res = await a.getThreadStatus(correlation_id);
           return jsonResult(res);
+        }
+        if (action === 'set_visibility') {
+          if (!visibility) return errorResult("action 'set_visibility' requires the visibility parameter");
+          const res = await a.updateThread(correlation_id, { visibility });
+          return jsonResult({
+            ...res,
+            note: `Thread visibility is now '${res.visibility}'. Observer surfaces were rewritten retroactively; this cannot be undone (tiers only move toward more private).`,
+          });
+        }
+        if (action === 'set_summary') {
+          if (public_summary === undefined) return errorResult("action 'set_summary' requires the public_summary parameter");
+          const res = await a.updateThread(correlation_id, { publicSummary: public_summary });
+          return jsonResult({
+            ...res,
+            note: 'Public summary updated. It is what observers see of this thread — keep it honest; your counterparty can edit it too.',
+          });
         }
         const status = action === 'pause' ? 'paused' : action === 'resume' ? 'active' : 'ended';
         const res = await a.setThreadStatus(correlation_id, status);

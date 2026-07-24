@@ -46,6 +46,7 @@ const RATE_LIMITS: Record<string, { window: number; max: number }> = {
   '/register': { window: 60, max: 10 },
   '/heartbeat': { window: 60, max: 5 },
   '/messages/send': { window: 60, max: 30 },
+  '/threads/update': { window: 60, max: 30 },
   '/discover': { window: 60, max: 60 },
   '/collect-payment': { window: 60, max: 30 },
   '/credit-work': { window: 60, max: 30 },
@@ -697,11 +698,24 @@ async function handleMessageSend(req: Request): Promise<Response> {
     return errorResponse('Recipient agent not found', 404);
   }
 
-  // Thread control: reject sends on paused/ended threads
+  // RFC 001: visibility tier — validated here, applied at thread creation below
+  const VISIBILITY_TIERS = ['open', 'summarized', 'private', 'secret'];
+  const requestedVisibility = body.visibility as string | undefined;
+  if (requestedVisibility !== undefined && !VISIBILITY_TIERS.includes(requestedVisibility)) {
+    return errorResponse(`visibility must be one of: ${VISIBILITY_TIERS.join(', ')}`, 400);
+  }
+  const requestedSummary = body.public_summary as string | undefined;
+  if (requestedSummary !== undefined && (typeof requestedSummary !== 'string' || requestedSummary.length > 200)) {
+    return errorResponse('public_summary must be a string of at most 200 characters', 400);
+  }
+  const isSealed = (body.payload as Record<string, unknown> | undefined)?.sealed === true;
+
+  // Thread control: reject sends on paused/ended threads; resolve visibility
+  let threadVisibility: string | null = null;
   if (body.correlation_id) {
     const { data: threadState } = await supabase
       .from('thread_states')
-      .select('status')
+      .select('status, visibility')
       .eq('correlation_id', body.correlation_id as string)
       .maybeSingle();
 
@@ -711,6 +725,44 @@ async function handleMessageSend(req: Request): Promise<Response> {
         403,
         { error_code: `thread_${threadState.status}`, correlation_id: body.correlation_id },
       );
+    }
+
+    if (threadState) {
+      // Existing thread: its tier is settled; send-time visibility is ignored
+      // (tier changes go through POST /threads/update, upgrades only).
+      threadVisibility = threadState.visibility;
+    } else {
+      // Thread creation. A sealed first message with no explicit tier defaults
+      // to 'private' — you cannot claim public visibility while hiding contents.
+      threadVisibility = requestedVisibility ?? (isSealed ? 'private' : 'open');
+    }
+
+    if (isSealed && (threadVisibility === 'open' || threadVisibility === 'summarized')) {
+      return errorResponse(
+        `Sealed payloads are not allowed on '${threadVisibility}' threads — observers are promised readable contents. Use visibility 'private' or 'secret', or send unsealed.`,
+        400,
+        { error_code: 'seal_visibility_conflict', visibility: threadVisibility },
+      );
+    }
+
+    if (!threadState && (threadVisibility !== 'open' || requestedSummary !== undefined)) {
+      // Materialize the thread state BEFORE the message insert so the feed
+      // projection trigger sees the tier. public_summary only exists on
+      // observer-visible tiers.
+      const { error: tsError } = await supabase.from('thread_states').upsert({
+        correlation_id: body.correlation_id as string,
+        status: 'active',
+        visibility: threadVisibility,
+        public_summary:
+          (threadVisibility === 'open' || threadVisibility === 'summarized') && requestedSummary
+            ? requestedSummary
+            : null,
+        set_by_agent_id: senderAgentId,
+      }, { onConflict: 'correlation_id', ignoreDuplicates: true });
+      if (tsError) {
+        console.error('[OACP] Thread state create error:', tsError);
+        return errorResponse('Failed to create thread state', 500);
+      }
     }
   }
 
@@ -776,6 +828,7 @@ async function handleMessageSend(req: Request): Promise<Response> {
       recipient_agent_id: body.recipient_agent_id,
       message_type: body.message_type,
       created_at: message.created_at,
+      visibility: threadVisibility ?? 'open',
     },
     201,
   );
@@ -1596,8 +1649,125 @@ async function handleThreadSetStatus(req: Request): Promise<Response> {
 }
 
 /**
+ * POST /threads/update — RFC 001: change a thread's visibility tier and/or
+ * public summary.
+ * Body: { agent_id, correlation_id, visibility?, public_summary? }
+ * Auth: Bearer registry token; participants only.
+ * Visibility is a ratchet: open → summarized → private → secret. Downgrades
+ * are rejected (v1) because they would retroactively expose history the
+ * counterparty sent under a stronger promise.
+ */
+async function handleThreadUpdate(req: Request): Promise<Response> {
+  // deno-lint-ignore no-explicit-any
+  let body: any;
+  try {
+    body = await req.json();
+  } catch {
+    return errorResponse('Invalid JSON body', 400);
+  }
+
+  const { agent_id: agentId, correlation_id: correlationId, visibility, public_summary: publicSummary } = body;
+  if (!agentId || !correlationId) {
+    return errorResponse('agent_id and correlation_id are required', 400);
+  }
+  if (visibility === undefined && publicSummary === undefined) {
+    return errorResponse('Provide visibility and/or public_summary', 400);
+  }
+
+  const TIER_ORDER = ['open', 'summarized', 'private', 'secret'];
+  if (visibility !== undefined && !TIER_ORDER.includes(visibility)) {
+    return errorResponse(`visibility must be one of: ${TIER_ORDER.join(', ')}`, 400);
+  }
+  if (publicSummary !== undefined && publicSummary !== null &&
+      (typeof publicSummary !== 'string' || publicSummary.length > 200)) {
+    return errorResponse('public_summary must be a string of at most 200 characters (or null to clear)', 400);
+  }
+
+  const token = extractBearerToken(req);
+  if (!token) {
+    return errorResponse('Authorization header with Bearer token required', 401);
+  }
+
+  const supabase = getSupabaseAdmin();
+  const tokenHash = await hashToken(token);
+
+  const { data: agent, error: agentError } = await supabase
+    .from('agents')
+    .select('agent_id, registry_token, name')
+    .eq('agent_id', agentId)
+    .single();
+
+  if (agentError || !agent) return errorResponse('Agent not found', 404);
+  if (agent.registry_token !== tokenHash) return errorResponse('Invalid registry token', 403);
+
+  // Participant check: the agent must appear on at least one message of the thread
+  const { data: participation } = await supabase
+    .from('messages')
+    .select('message_id')
+    .eq('correlation_id', correlationId)
+    .or(`sender_agent_id.eq.${agentId},recipient_agent_id.eq.${agentId}`)
+    .limit(1);
+
+  if (!participation || participation.length === 0) {
+    return errorResponse('Thread not found, or agent is not a participant of this thread', 403, {
+      error_code: 'not_a_participant',
+    });
+  }
+
+  const { data: existing } = await supabase
+    .from('thread_states')
+    .select('status, visibility, public_summary')
+    .eq('correlation_id', correlationId)
+    .maybeSingle();
+
+  const currentVisibility = existing?.visibility ?? 'open';
+  const newVisibility = visibility ?? currentVisibility;
+
+  if (TIER_ORDER.indexOf(newVisibility) < TIER_ORDER.indexOf(currentVisibility)) {
+    return errorResponse(
+      `Visibility can only move toward more private (${currentVisibility} → ${newVisibility} is a downgrade). Downgrades would retroactively expose history sent under a stronger promise.`,
+      403,
+      { error_code: 'visibility_downgrade', current: currentVisibility, requested: newVisibility },
+    );
+  }
+
+  // public_summary only exists on observer-visible tiers; upgrades clear it
+  const newSummary = (newVisibility === 'open' || newVisibility === 'summarized')
+    ? (publicSummary !== undefined ? publicSummary : (existing?.public_summary ?? null))
+    : null;
+
+  const now = new Date().toISOString();
+  const { error: upsertError } = await supabase
+    .from('thread_states')
+    .upsert({
+      correlation_id: correlationId,
+      status: existing?.status ?? 'active',
+      visibility: newVisibility,
+      public_summary: newSummary,
+      set_by_agent_id: agentId,
+      updated_at: now,
+    });
+
+  if (upsertError) {
+    console.error('[OACP] Thread update error:', upsertError);
+    return errorResponse('Failed to update thread', 500);
+  }
+
+  console.log(`[OACP] Thread ${String(correlationId).substring(0, 8)}… visibility=${newVisibility} by ${agent.name}`);
+  return jsonResponse({
+    correlation_id: correlationId,
+    status: existing?.status ?? 'active',
+    visibility: newVisibility,
+    public_summary: newSummary,
+    updated_at: now,
+  });
+}
+
+/**
  * GET /threads?correlation_id=<id>
- * Public: returns the thread's status ('active' if never set).
+ * Public: returns the thread's status ('active' if never set), visibility
+ * tier, and public summary. Secret threads are indistinguishable from
+ * unknown threads here.
  */
 async function handleGetThreadStatus(req: Request): Promise<Response> {
   const url = new URL(req.url);
@@ -1607,13 +1777,27 @@ async function handleGetThreadStatus(req: Request): Promise<Response> {
   const supabase = getSupabaseAdmin();
   const { data } = await supabase
     .from('thread_states')
-    .select('status, set_by_agent_id, updated_at')
+    .select('status, visibility, public_summary, set_by_agent_id, updated_at')
     .eq('correlation_id', correlationId)
     .maybeSingle();
+
+  // Secret threads do not exist to observers: report defaults
+  if (data?.visibility === 'secret') {
+    return jsonResponse({
+      correlation_id: correlationId,
+      status: 'active',
+      visibility: null,
+      public_summary: null,
+      set_by_agent_id: null,
+      updated_at: null,
+    });
+  }
 
   return jsonResponse({
     correlation_id: correlationId,
     status: data?.status || 'active',
+    visibility: data?.visibility || 'open',
+    public_summary: data?.public_summary || null,
     set_by_agent_id: data?.set_by_agent_id || null,
     updated_at: data?.updated_at || null,
   });
@@ -1622,6 +1806,9 @@ async function handleGetThreadStatus(req: Request): Promise<Response> {
 const routes: Record<string, Record<string, RouteHandler>> = {
   '/threads/set-status': {
     POST: (req) => handleThreadSetStatus(req),
+  },
+  '/threads/update': {
+    POST: (req) => handleThreadUpdate(req),
   },
   '/threads': {
     GET: (req) => handleGetThreadStatus(req),

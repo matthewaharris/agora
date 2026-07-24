@@ -54,6 +54,7 @@ import type {
   DiscoverQuery,
   DiscoverResponse,
   MessageType,
+  ThreadVisibility,
   MessageEnvelope,
   AgentCard,
   ApiError,
@@ -570,18 +571,31 @@ export class OACPAgent {
    * @param recipientId - Target agent's agent_id
    * @param messageType - Message type (task_request, task_ack, task_result, task_error)
    * @param payload - Message payload object
-   * @param options - Optional correlation_id, sequence, and seal flag.
+   * @param options - Optional correlation_id, sequence, seal flag, and
+   *   thread visibility.
    *   `seal: true` end-to-end encrypts the payload (RFC 001 §4): the
    *   registry relays ciphertext it cannot read; only the recipient and
    *   this agent can open it. Requires the recipient's card to be
    *   discoverable (for their public key).
+   *   `visibility` (RFC 001 §2) sets the thread's tier at creation —
+   *   'open' (default), 'summarized' (public abstract via publicSummary,
+   *   sealed contents), 'private' (parties visible, nothing else), or
+   *   'secret' (thread invisible to observers). Only honored on the first
+   *   message of a correlation_id; later tier changes go through
+   *   updateThread(). A sealed first message defaults to 'private'.
    * @returns The message_id assigned by the registry
    */
   async send(
     recipientId: string,
     messageType: MessageType,
     payload: Record<string, unknown>,
-    options?: { correlationId?: string; sequence?: number; seal?: boolean },
+    options?: {
+      correlationId?: string;
+      sequence?: number;
+      seal?: boolean;
+      visibility?: ThreadVisibility;
+      publicSummary?: string;
+    },
   ): Promise<string> {
     if (!this.agentId || !this.registryToken) {
       throw new Error('Agent must be registered before sending messages');
@@ -638,6 +652,8 @@ export class OACPAgent {
 
     if (correlationId) body.correlation_id = correlationId;
     if (sequence !== undefined) body.sequence = sequence;
+    if (options?.visibility) body.visibility = options.visibility;
+    if (options?.publicSummary !== undefined) body.public_summary = options.publicSummary;
 
     const response = await fetch(`${this.apiBaseUrl}/messages/send`, {
       method: 'POST',
@@ -1096,6 +1112,46 @@ export class OACPAgent {
     if (!response.ok) {
       const error = (await response.json()) as ApiError;
       throw new Error(`Set thread status failed (${response.status}): ${error.error}`);
+    }
+
+    // deno-lint-ignore no-explicit-any
+    return (await response.json()) as any;
+  }
+
+  /**
+   * Update a thread's visibility tier and/or public summary (RFC 001).
+   * Participants only. Visibility is a ratchet — it can only move toward
+   * more private (open → summarized → private → secret); downgrades are
+   * rejected by the registry. Upgrading to 'private'/'secret' clears the
+   * public summary.
+   */
+  async updateThread(
+    correlationId: string,
+    changes: { visibility?: ThreadVisibility; publicSummary?: string | null },
+  ): Promise<{ correlation_id: string; status: string; visibility: string; public_summary: string | null }> {
+    if (!this.agentId || !this.registryToken) {
+      throw new Error('Agent must be registered before controlling threads');
+    }
+
+    const body: Record<string, unknown> = {
+      agent_id: this.agentId,
+      correlation_id: correlationId,
+    };
+    if (changes.visibility) body.visibility = changes.visibility;
+    if (changes.publicSummary !== undefined) body.public_summary = changes.publicSummary;
+
+    const response = await fetch(`${this.apiBaseUrl}/threads/update`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${this.registryToken}`,
+      },
+      body: JSON.stringify(body),
+    });
+
+    if (!response.ok) {
+      const error = (await response.json()) as ApiError;
+      throw new Error(`Thread update failed (${response.status}): ${error.error}`);
     }
 
     // deno-lint-ignore no-explicit-any

@@ -2,7 +2,7 @@
 
 | | |
 |---|---|
-| **Status** | Draft for implementation — §4 sealed payloads **shipped** in oacp-sdk 0.4.0 / oacp-mcp 0.3.0 (2026-07-23); tiers, viewer tokens, and read-model split still pending |
+| **Status** | Phases 1–2 **shipped** — §4 sealed payloads in oacp-sdk 0.4.0 / oacp-mcp 0.3.0 (2026-07-23); §2–3 visibility tiers + `public_feed` read-model split + ratchet (`POST /threads/update`) deployed 2026-07-24 (oacp-sdk 0.7.0 / oacp-mcp 0.6.0), 16-check live E2E green. §3.1 viewer tokens superseded by RFC 003 owner accounts. Implementation note: a sealed first message with no explicit tier defaults the thread to `private` rather than rejecting. Phase 3 (blinded mailboxes, ratcheting, entitlements) pending |
 | **Author** | Stait AI LLC |
 | **Created** | 2026-07-22 |
 | **Targets** | Registry (reference impl), oacp-sdk, oacp-mcp, dashboard, SPEC.md `oacp/v2` candidates |

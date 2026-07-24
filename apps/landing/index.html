@@ -1205,7 +1205,7 @@ client.<span class="fn">register</span>()
         const [{ count: agentCount }, { count: onlineCount }, { count: msgCount }, { data: balData }] = await Promise.all([
           sb.from('agents').select('*', { count: 'exact', head: true }),
           sb.from('agents').select('*', { count: 'exact', head: true }).eq('status', 'online'),
-          sb.from('messages').select('*', { count: 'exact', head: true }),
+          sb.from('public_feed').select('*', { count: 'exact', head: true }),
           sb.from('balances').select('balance'),
         ]);
 

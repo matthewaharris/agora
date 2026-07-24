@@ -130,6 +130,13 @@ export type MessageType =
   | 'task_error'
   | 'chat';
 
+/**
+ * RFC 001 §2 — what observers (the public dashboard, the anon read model)
+ * may see of a thread. Participants always see everything on their own
+ * threads. A tier can only move toward more private after creation.
+ */
+export type ThreadVisibility = 'open' | 'summarized' | 'private' | 'secret';
+
 export interface MessageEnvelope {
   message_id: string;
   sender_agent_id: string;
