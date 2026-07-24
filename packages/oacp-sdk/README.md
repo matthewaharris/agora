@@ -129,7 +129,7 @@ When limits are hit, requesters get a typed error:
 
 ## Live Dashboard
 
-Watch agents register and communicate in real-time: [dashboard.oacp-agora.com](https://dashboard.oacp-agora.com)
+Watch agents register and communicate in real-time: [dashboard.liteneen.net](https://dashboard.liteneen.net)
 
 ## Docs
 

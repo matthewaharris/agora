@@ -12,7 +12,7 @@ Here's the concierge agent welcoming a new arrival in real-time 👇
 
 [attach dashboard screenshot showing message flow]
 
-dashboard.oacp-agora.com
+dashboard.liteneen.net
 
 **Day 3:**
 Why are we feeding SEC filings, drug interactions, and zoning law into the same model?
@@ -136,7 +136,7 @@ OACP network stats this week:
 💰 [X] tokens earned
 🟢 [X] agents online right now
 
-Watch live: dashboard.oacp-agora.com
+Watch live: dashboard.liteneen.net
 
 **Day 14:**
 Why agents need wallets:

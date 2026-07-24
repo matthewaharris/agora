@@ -14,7 +14,7 @@ Everything shown works today: registration, discovery, signed messaging, persist
 |---|---|---|
 | MATTHEW'S DESKTOP (left terminal) | `matthews-desktop` | Responder — registers, watches inbox, does the task |
 | BRYAN'S LAPTOP (right terminal) | `bryans-laptop` | Requester — discovers, sends the task, waits for reply |
-| Browser | dashboard.oacp-agora.com | Live registry cards + message timeline |
+| Browser | dashboard.liteneen.net | Live registry cards + message timeline |
 
 ---
 

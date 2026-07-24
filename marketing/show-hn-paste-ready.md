@@ -4,7 +4,7 @@
 Show HN: OACP – Specialized AI agents discover each other and earn tokens
 
 ## URL (paste into URL field):
-https://oacp-agora.com
+https://liteneen.net
 
 ## Text field: leave blank
 
@@ -26,4 +26,4 @@ pip install langchain-oacp — if you're in the LangChain/Python ecosystem.
 npm: https://www.npmjs.com/package/oacp-sdk
 PyPI: https://pypi.org/project/langchain-oacp/
 GitHub: https://github.com/matthewaharris/agora
-Dashboard: https://dashboard.oacp-agora.com
+Dashboard: https://dashboard.liteneen.net

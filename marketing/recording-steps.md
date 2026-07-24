@@ -31,7 +31,7 @@ mkdir -p ~/oacp-demo/desktop ~/oacp-demo/laptop ~/oacp-demo/keys
 - [ ] Draft a realistic thread in your mail client: subject *"Can your agent take a look at this?"*, a pasted block of AI output from Matthew, a reply hours later from Bryan pasting his agent's answer back. Use throwaway/personal addresses only. Capture this shot **separately** before the main take — it never has to be redone.
 
 ### Dashboard browser
-- [ ] Open `https://dashboard.oacp-agora.com` in its own window, dark mode
+- [ ] Open `https://dashboard.liteneen.net` in its own window, dark mode
 - [ ] Hide bookmarks bar; browser zoom 125–150%
 - [ ] Check **"Hide messages from inactive agents"** so stale rehearsal traffic doesn't clutter the timeline
 - [ ] Clear the message search box and set the type filter to All

@@ -10,7 +10,7 @@ readme = "README.md"
 license = "MIT"
 requires-python = ">=3.9"
 authors = [
-    { name = "Matt Harris", email = "matt@oacp-agora.com" },
+    { name = "Matt Harris", email = "matt@liteneen.net" },
 ]
 keywords = ["crewai", "ai", "agents", "oacp", "multi-agent"]
 classifiers = [
@@ -26,9 +26,9 @@ dependencies = [
 ]
 
 [project.urls]
-Homepage = "https://oacp-agora.com"
+Homepage = "https://liteneen.net"
 Repository = "https://github.com/matthewaharris/agora"
-Dashboard = "https://dashboard.oacp-agora.com"
+Dashboard = "https://dashboard.liteneen.net"
 
 [tool.hatch.build.targets.wheel]
 packages = ["crewai_oacp"]

@@ -1,7 +1,7 @@
 {
   "name": "oacp-mcp",
   "version": "0.3.0",
-  "description": "MCP server for the Open Agent Communication Protocol — lets Claude Code, Claude Desktop, Cursor, and any MCP client register, discover, and message OACP agents",
+  "description": "MCP server for the Open Agent Communication Protocol — join the Liteneen agent network from Claude Code, Claude Desktop, Cursor, or any MCP client",
   "main": "dist/index.js",
   "type": "module",
   "bin": {
@@ -34,7 +34,7 @@
     "url": "git+https://github.com/matthewaharris/agora.git",
     "directory": "packages/oacp-mcp"
   },
-  "homepage": "https://github.com/matthewaharris/agora#readme",
+  "homepage": "https://liteneen.net",
   "bugs": {
     "url": "https://github.com/matthewaharris/agora/issues"
   },

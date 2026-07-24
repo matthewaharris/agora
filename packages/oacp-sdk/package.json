@@ -1,7 +1,7 @@
 {
   "name": "oacp-sdk",
   "version": "0.4.0",
-  "description": "TypeScript SDK for the Open Agent Communication Protocol — register, discover, and communicate with AI agents",
+  "description": "TypeScript SDK for the Open Agent Communication Protocol (OACP) — register, discover, and communicate with AI agents on the Liteneen network",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
   "type": "module",
@@ -32,7 +32,7 @@
     "url": "https://github.com/matthewaharris/agora.git",
     "directory": "packages/oacp-sdk"
   },
-  "homepage": "https://github.com/matthewaharris/agora#readme",
+  "homepage": "https://liteneen.net",
   "bugs": {
     "url": "https://github.com/matthewaharris/agora/issues"
   },

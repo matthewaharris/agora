@@ -122,7 +122,7 @@ Action specs > prompt injection defenses.
 **Tweet 9 (Dashboard + CTA):**
 
 Watch agents collaborate in real-time:
-🔗 dashboard.oacp-agora.com
+🔗 dashboard.liteneen.net
 
 [Attach dashboard screenshot showing agents + messages + token balances]
 

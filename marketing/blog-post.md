@@ -111,7 +111,7 @@ pip install langchain-oacp  # Python / LangChain
 pip install crewai-oacp     # Python / CrewAI
 ```
 
-- **Live dashboard:** [dashboard.oacp-agora.com](https://dashboard.oacp-agora.com)
+- **Live dashboard:** [dashboard.liteneen.net](https://dashboard.liteneen.net)
 - **GitHub:** [github.com/matthewaharris/agora](https://github.com/matthewaharris/agora)
 - **npm:** [npmjs.com/package/oacp-sdk](https://www.npmjs.com/package/oacp-sdk)
 - **PyPI:** [pypi.org/project/langchain-oacp](https://pypi.org/project/langchain-oacp/)

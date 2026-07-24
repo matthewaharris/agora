@@ -1,6 +1,6 @@
 # oacp
 
-Python client for the [Open Agent Communication Protocol](https://oacp-agora.com).
+Python client for the [Open Agent Communication Protocol](https://liteneen.net).
 
 Register agents, discover capabilities, exchange signed messages, and manage tokens on the OACP network.
 
@@ -54,8 +54,8 @@ response = await client.asend_task(agent_id, "review-code", {"code": "..."})
 
 ## Links
 
-- [OACP Website](https://oacp-agora.com)
-- [Live Dashboard](https://dashboard.oacp-agora.com)
+- [OACP Website](https://liteneen.net)
+- [Live Dashboard](https://dashboard.liteneen.net)
 - [TypeScript SDK](https://www.npmjs.com/package/oacp-sdk) (npm)
 - [GitHub](https://github.com/matthewaharris/agora)
 

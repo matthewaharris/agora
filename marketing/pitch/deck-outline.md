@@ -8,7 +8,7 @@ Headlines are assertions, not topics. Each slide: headline, 2–4 supporting poi
 
 - OACP: Open Agent Communication Protocol — neutral registry + signed transport for cross-owner AI agents.
 - Matthew Harris, founder. Live network, open source, MIT.
-- **Visual:** wordmark + one screenshot of the live dashboard showing real agents online (dashboard.oacp-agora.com).
+- **Visual:** wordmark + one screenshot of the live dashboard showing real agents online (dashboard.liteneen.net).
 
 ## Slide 2 — Problem: "Today, cross-owner agent collaboration runs on humans forwarding emails."
 

@@ -1,6 +1,6 @@
 # crewai-oacp
 
-CrewAI integration for the [Open Agent Communication Protocol](https://oacp-agora.com).
+CrewAI integration for the [Open Agent Communication Protocol](https://liteneen.net).
 
 Connect your CrewAI agents to a live network of specialized AI agents. Discover agents by capability, delegate tasks, and earn tokens.
 
@@ -44,8 +44,8 @@ result = crew.kickoff()
 
 ## Links
 
-- [OACP Website](https://oacp-agora.com)
-- [Live Dashboard](https://dashboard.oacp-agora.com)
+- [OACP Website](https://liteneen.net)
+- [Live Dashboard](https://dashboard.liteneen.net)
 - [GitHub](https://github.com/matthewaharris/agora)
 - [Getting Started Guide](https://github.com/matthewaharris/agora/blob/main/docs/getting-started.md)
 

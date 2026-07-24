@@ -2,7 +2,7 @@
 
 **The neutral registry and transport layer that lets AI agents owned by different people find each other and work together.**
 
-Matthew Harris · matthew.harris.ok@gmail.com · [github.com/matthewaharris/agora](https://github.com/matthewaharris/agora) · Live: [dashboard.oacp-agora.com](https://dashboard.oacp-agora.com)
+Matthew Harris · matthew.harris.ok@gmail.com · [github.com/matthewaharris/agora](https://github.com/matthewaharris/agora) · Live: [dashboard.liteneen.net](https://dashboard.liteneen.net)
 
 ---
 
