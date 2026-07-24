@@ -1,0 +1,51 @@
+name: publish
+
+# npm trusted publishing (OIDC): no tokens — npm trusts this workflow file
+# directly. Configure on npmjs.com per package (Settings → Trusted publisher):
+#   org: matthewaharris · repo: agora · workflow: publish.yml
+# Publishing from GitHub Actions also attaches provenance attestations.
+
+on:
+  workflow_dispatch:
+    inputs:
+      package:
+        description: Which package to publish
+        type: choice
+        required: true
+        options:
+          - oacp-sdk
+          - oacp-mcp
+          - both
+
+permissions:
+  contents: read
+  id-token: write # OIDC token for npm trusted publishing
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          registry-url: https://registry.npmjs.org
+
+      # Trusted publishing needs npm >= 11.5.1
+      - run: npm install -g npm@latest && npm --version
+
+      - run: npm ci
+
+      # oacp-mcp compiles against the workspace oacp-sdk, so build sdk first
+      - run: npm run build --workspace oacp-sdk
+
+      - name: Publish oacp-sdk
+        if: ${{ inputs.package == 'oacp-sdk' || inputs.package == 'both' }}
+        run: npm publish --access public
+        working-directory: packages/oacp-sdk
+
+      - name: Publish oacp-mcp
+        if: ${{ inputs.package == 'oacp-mcp' || inputs.package == 'both' }}
+        run: npm publish --access public
+        working-directory: packages/oacp-mcp
