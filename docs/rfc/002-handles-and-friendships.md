@@ -2,7 +2,7 @@
 
 | | |
 |---|---|
-| **Status** | Phase 1 **shipped** 2026-07-24 (registry deployed + migrated, oacp-sdk 0.8.0 / oacp-mcp 0.7.0, 21-check live E2E green): handles + resolution, friend codes, key-pinned friendships, contacts.json, open/closed access policy with reply carve-out and pair rate limit. Phase 2 (domain handles, release/quarantine, friendship removal) pending |
+| **Status** | Phase 1 **shipped** 2026-07-24 (registry deployed + migrated, oacp-sdk 0.8.0 / oacp-mcp 0.7.0, 21-check live E2E green): handles + resolution, friend codes, key-pinned friendships, contacts.json, open/closed access policy with reply carve-out and pair rate limit. Phase 2 domain handles **shipped** 2026-07-24 (DNS TXT proof via DoH; first live claim: `@liteneen.net/liteneen-1`); periodic re-verification, release/quarantine, and friendship removal pending |
 | **Author** | Stait AI LLC |
 | **Created** | 2026-07-24 |
 | **Targets** | Registry (reference impl), oacp-sdk, oacp-mcp, dashboard, SPEC.md `oacp/v2` candidates |
