@@ -72,12 +72,23 @@ function compactAgentCard(a: Record<string, unknown>) {
 }
 
 function compactMessage(m: MessageEnvelope) {
+  // Sealed payloads the SDK could decrypt arrive already-unsealed with
+  // was_sealed set. One still sealed here is one we can't open — replace
+  // the ciphertext blob with a compact marker instead of dumping hex.
+  const payload =
+    (m.payload as Record<string, unknown> | undefined)?.sealed === true
+      ? {
+          sealed: true,
+          note: 'End-to-end encrypted payload — this agent is not a designated reader, so it cannot be decrypted here.',
+        }
+      : m.payload;
   return {
     message_id: m.message_id,
     sender_agent_id: m.sender_agent_id,
     recipient_agent_id: m.recipient_agent_id,
     message_type: m.message_type,
-    payload: m.payload,
+    payload,
+    ...(m.was_sealed ? { was_sealed: true } : {}),
     correlation_id: m.correlation_id,
     timestamp: m.timestamp,
   };
@@ -92,6 +103,30 @@ export function buildServer(): { server: McpServer; shutdown: () => Promise<void
   // lazily and rebuild it if oacp_register supplies a different identity.
   // The on-disk keypair keeps agent_id stable across rebuilds.
   let agent: OACPAgent | null = null;
+
+  // Push delivery: a Supabase Realtime subscription wakes any pending
+  // oacp_wait_for_reply the moment a message lands, instead of that call
+  // discovering it on its next poll. The REST inbox stays authoritative —
+  // push only shortcuts the wait, so filtering/ordering never depend on
+  // the realtime channel being healthy.
+  let pushWakers: Array<() => void> = [];
+
+  function wakeWaiters(): void {
+    const waiters = pushWakers;
+    pushWakers = [];
+    for (const wake of waiters) wake();
+  }
+
+  function nextPush(): { wait: Promise<void>; cancel: () => void } {
+    let resolve!: () => void;
+    const wait = new Promise<void>((r) => (resolve = r));
+    pushWakers.push(resolve);
+    return { wait, cancel: () => (pushWakers = pushWakers.filter((w) => w !== resolve)) };
+  }
+
+  function enablePush(a: OACPAgent): void {
+    a.on('*', () => wakeWaiters());
+  }
 
   function makeAgent(overrides?: {
     name?: string;
@@ -128,10 +163,11 @@ export function buildServer(): { server: McpServer; shutdown: () => Promise<void
     if (!agent) agent = makeAgent(); // throws with guidance if no name is configured
     await agent.register();
     agent.startHeartbeat();
+    enablePush(agent);
     return agent;
   }
 
-  const server = new McpServer({ name: 'oacp', version: '0.2.1' });
+  const server = new McpServer({ name: 'oacp', version: '0.3.0' });
 
   // ----------------------------------------------------------
   // oacp_register
@@ -168,6 +204,7 @@ export function buildServer(): { server: McpServer; shutdown: () => Promise<void
         agent = makeAgent({ name, capabilities, description, ownerHandle: owner_handle });
         const agentId = await agent.register();
         agent.startHeartbeat();
+        enablePush(agent);
         return jsonResult({
           agent_id: agentId,
           public_key: agent.getPublicKey(),
@@ -289,9 +326,15 @@ export function buildServer(): { server: McpServer; shutdown: () => Promise<void
           .string()
           .optional()
           .describe('Thread ID linking a reply to the original request. Reuse the incoming message_id or correlation_id when replying.'),
+        seal: z
+          .boolean()
+          .optional()
+          .describe(
+            'End-to-end encrypt the payload (RFC 001 sealed payloads): only the recipient and this agent can read it — the registry relays ciphertext. Use for confidential content. The envelope (sender, recipient, type, thread) stays visible for routing and the kill switch.',
+          ),
       },
     },
-    async ({ recipient_agent_id, message_type, payload, correlation_id }) => {
+    async ({ recipient_agent_id, message_type, payload, correlation_id, seal }) => {
       try {
         const a = await requireRegistered();
         // Every message gets a correlation_id so both sides can track the
@@ -301,15 +344,17 @@ export function buildServer(): { server: McpServer; shutdown: () => Promise<void
           recipient_agent_id,
           message_type as MessageType,
           payload as Record<string, unknown>,
-          { correlationId: threadId },
+          { correlationId: threadId, seal },
         );
         return jsonResult({
           message_id: messageId,
           correlation_id: threadId,
+          ...(seal ? { sealed: true } : {}),
           note:
-            message_type === 'task_request'
-              ? `Sent. Call oacp_wait_for_reply with correlation_id "${threadId}" to wait for the response.`
-              : 'Sent.',
+            (seal ? 'Sent sealed — payload is end-to-end encrypted; the registry cannot read it. ' : '') +
+            (message_type === 'task_request'
+              ? `Call oacp_wait_for_reply with correlation_id "${threadId}" to wait for the response.`
+              : 'Sent.'),
         });
       } catch (err) {
         return errorResult(err instanceof Error ? err.message : String(err));
@@ -365,6 +410,7 @@ export function buildServer(): { server: McpServer; shutdown: () => Promise<void
       title: 'Wait for an OACP message',
       description:
         'Block until a new inbox message arrives (optionally filtered by correlation_id and/or message_type), or until the timeout. ' +
+        'Delivery is push-based (Supabase Realtime) when available, so replies arrive near-instantly; a background poll covers the fallback. ' +
         'Use after oacp_send with a task_request to collect the task_result. ' +
         'Returns { timed_out: true } if nothing arrives — the reply may still come later; check again with oacp_check_inbox. ' +
         'Keep timeout_seconds under your MCP client tool timeout (default 25s).',
@@ -386,23 +432,35 @@ export function buildServer(): { server: McpServer; shutdown: () => Promise<void
         const a = await requireRegistered();
         const startedAt = since || new Date().toISOString();
         const deadline = Date.now() + timeout_seconds * 1000;
-        const pollMs = 2500;
 
         while (Date.now() < deadline) {
-          const res = await a.getMessages({
-            direction: 'inbox',
-            correlationId: correlation_id,
-            messageType: message_type as MessageType | undefined,
-            since: startedAt,
-            limit: 10,
-          });
-          if (res.messages.length > 0) {
-            return jsonResult({
-              timed_out: false,
-              messages: res.messages.map(compactMessage),
+          // Arm the push waker BEFORE polling — a message landing during
+          // the poll wakes the next race instead of falling in the gap.
+          const push = nextPush();
+          try {
+            const res = await a.getMessages({
+              direction: 'inbox',
+              correlationId: correlation_id,
+              messageType: message_type as MessageType | undefined,
+              since: startedAt,
+              limit: 10,
             });
+            if (res.messages.length > 0) {
+              return jsonResult({
+                timed_out: false,
+                messages: res.messages.map(compactMessage),
+              });
+            }
+            // With live push, polling is only a safety net; without it,
+            // fall back to the old tight cadence.
+            const pollMs = a.isRealtimeConnected() ? 10_000 : 2500;
+            await Promise.race([
+              push.wait,
+              sleep(Math.min(pollMs, Math.max(0, deadline - Date.now()))),
+            ]);
+          } finally {
+            push.cancel();
           }
-          await sleep(Math.min(pollMs, Math.max(0, deadline - Date.now())));
         }
 
         return jsonResult({
@@ -522,6 +580,7 @@ export function buildServer(): { server: McpServer; shutdown: () => Promise<void
   );
 
   const shutdown = async () => {
+    wakeWaiters();
     if (agent) {
       await agent.shutdown();
       agent = null;
