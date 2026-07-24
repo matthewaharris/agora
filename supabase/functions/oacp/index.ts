@@ -445,6 +445,7 @@ async function handleDiscover(req: Request): Promise<Response> {
   const capability = url.searchParams.get('capability');
   const status = url.searchParams.get('status') as AgentStatus | null;
   const ownerHandle = url.searchParams.get('owner_handle');
+  const agentId = url.searchParams.get('agent_id');
   const page = Math.max(1, parseInt(url.searchParams.get('page') || '1', 10));
   const pageSize = Math.min(
     MAX_PAGE_SIZE,
@@ -468,6 +469,11 @@ async function handleDiscover(req: Request): Promise<Response> {
     );
 
   // Apply filters
+  if (agentId) {
+    // Direct card lookup — used by senders to fetch a recipient's
+    // public_key before sealing a payload (RFC 001 §4)
+    query = query.eq('agent_id', agentId);
+  }
   if (capability) {
     // Use Postgres array contains operator for GIN-indexed lookup
     query = query.contains('capabilities', [capability]);

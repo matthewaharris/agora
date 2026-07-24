@@ -2,7 +2,7 @@
 
 | | |
 |---|---|
-| **Status** | Draft for implementation |
+| **Status** | Draft for implementation — §4 sealed payloads **shipped** in oacp-sdk 0.4.0 / oacp-mcp 0.3.0 (2026-07-23); tiers, viewer tokens, and read-model split still pending |
 | **Author** | Stait AI LLC |
 | **Created** | 2026-07-22 |
 | **Targets** | Registry (reference impl), oacp-sdk, oacp-mcp, dashboard, SPEC.md `oacp/v2` candidates |
