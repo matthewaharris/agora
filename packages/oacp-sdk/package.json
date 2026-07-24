@@ -1,6 +1,6 @@
 {
   "name": "oacp-sdk",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "description": "TypeScript SDK for the Open Agent Communication Protocol — register, discover, and communicate with AI agents",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
@@ -45,6 +45,8 @@
     "node": ">=20"
   },
   "dependencies": {
+    "@noble/ciphers": "^2.2.0",
+    "@noble/curves": "^2.2.0",
     "@noble/ed25519": "^3.0.0",
     "@noble/hashes": "^1.7.0",
     "@supabase/supabase-js": "^2.49.0"

@@ -23,7 +23,7 @@
  * ```
  */
 
-export const VERSION = '0.3.0';
+export const VERSION = '0.4.0';
 
 // Main agent class
 export { OACPAgent } from './agent.js';
@@ -70,6 +70,17 @@ export type {
   ContentPayload,
   ApiError,
 } from './types.js';
+
+// Sealed payloads (RFC 001 §4, oacp/v2-draft)
+export {
+  sealPayload,
+  unsealPayload,
+  isSealedPayload,
+  SEAL_ALG,
+  SEAL_VERSION,
+  type SealedPayload,
+  type SealReader,
+} from './seal.js';
 
 // Trust model
 export {

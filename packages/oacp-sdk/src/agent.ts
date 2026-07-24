@@ -33,6 +33,12 @@ import {
   type OACPKeypair,
 } from './crypto.js';
 import {
+  sealPayload,
+  unsealPayload,
+  isSealedPayload,
+  type SealReader,
+} from './seal.js';
+import {
   validatePayload,
   isSenderAllowed,
   matchAction,
@@ -67,6 +73,7 @@ export class OACPAgent {
   private messageHandlers: Map<string, Array<(msg: any) => void>> = new Map();
   // deno-lint-ignore no-explicit-any
   private realtimeChannel: any = null;
+  private realtimeActive = false;
   // deno-lint-ignore no-explicit-any
   private supabaseClient: any = null;
 
@@ -364,6 +371,35 @@ export class OACPAgent {
     return (await response.json()) as DiscoverResponse;
   }
 
+  /**
+   * Fetch a single agent's card by agent_id (used to get the recipient's
+   * public_key before sealing). Uses the registry's agent_id filter when
+   * available, with a client-side paging fallback for older registries.
+   */
+  async getAgentCard(agentId: string): Promise<AgentCard | null> {
+    // Fast path: registry supports ?agent_id= (additive, RFC 001)
+    const response = await fetch(
+      `${this.apiBaseUrl}/discover?agent_id=${encodeURIComponent(agentId)}`,
+    );
+    if (response.ok) {
+      const data = (await response.json()) as DiscoverResponse;
+      const hit = data.agents.find((a) => a.agent_id === agentId);
+      if (hit) return hit;
+      // Older registries ignore the filter and return page 1 of everything —
+      // fall through to paging only if the result looks unfiltered.
+      if (data.agents.length === 0 || data.total <= data.agents.length) return null;
+    }
+
+    // Fallback: page through discovery (capped)
+    for (let page = 1; page <= 10; page++) {
+      const res = await this.discover({ page, page_size: 100 });
+      const hit = res.agents.find((a) => a.agent_id === agentId);
+      if (hit) return hit;
+      if (page * 100 >= res.total) break;
+    }
+    return null;
+  }
+
   // ============================================================
   // Token Economy
   // ============================================================
@@ -460,17 +496,35 @@ export class OACPAgent {
    * @param recipientId - Target agent's agent_id
    * @param messageType - Message type (task_request, task_ack, task_result, task_error)
    * @param payload - Message payload object
-   * @param options - Optional correlation_id and sequence
+   * @param options - Optional correlation_id, sequence, and seal flag.
+   *   `seal: true` end-to-end encrypts the payload (RFC 001 §4): the
+   *   registry relays ciphertext it cannot read; only the recipient and
+   *   this agent can open it. Requires the recipient's card to be
+   *   discoverable (for their public key).
    * @returns The message_id assigned by the registry
    */
   async send(
     recipientId: string,
     messageType: MessageType,
     payload: Record<string, unknown>,
-    options?: { correlationId?: string; sequence?: number },
+    options?: { correlationId?: string; sequence?: number; seal?: boolean },
   ): Promise<string> {
     if (!this.agentId || !this.registryToken) {
       throw new Error('Agent must be registered before sending messages');
+    }
+
+    if (options?.seal) {
+      const recipientCard = await this.getAgentCard(recipientId);
+      if (!recipientCard?.public_key) {
+        throw new Error(
+          `[OACP] Cannot seal: no public key found for recipient ${recipientId}`,
+        );
+      }
+      const readers: SealReader[] = [
+        { agentId: recipientId, ed25519PublicKey: recipientCard.public_key },
+        { agentId: this.agentId, ed25519PublicKey: this.keypair.publicKey },
+      ];
+      payload = sealPayload(payload, readers);
     }
 
     // Canonicalize and sign — normalize null/undefined to ensure consistency
@@ -564,9 +618,28 @@ export class OACPAgent {
     // deno-lint-ignore no-explicit-any
     const result = (await response.json()) as any;
     return {
-      messages: result.messages as MessageEnvelope[],
+      messages: (result.messages as MessageEnvelope[]).map((m) => this.unsealEnvelope(m)),
       total: result.total as number,
     };
+  }
+
+  /**
+   * If the envelope carries a sealed payload this agent can open,
+   * return a copy with the decrypted payload and `was_sealed: true`.
+   * Sealed payloads we cannot open (or that fail to decrypt) pass
+   * through unchanged so callers can still see the sealed marker.
+   */
+  unsealEnvelope(msg: MessageEnvelope): MessageEnvelope {
+    if (!isSealedPayload(msg.payload) || !this.agentId) return msg;
+    try {
+      const payload = unsealPayload(msg.payload, this.keypair, this.agentId);
+      return { ...msg, payload, was_sealed: true } as MessageEnvelope;
+    } catch (err) {
+      console.warn(
+        `[OACP] Could not unseal message ${msg.message_id}: ${err instanceof Error ? err.message : err}`,
+      );
+      return msg;
+    }
   }
 
   /**
@@ -648,7 +721,10 @@ export class OACPAgent {
         )
         .subscribe((status: string) => {
           if (status === 'SUBSCRIBED') {
+            this.realtimeActive = true;
             console.log(`[OACP] Realtime subscription active for ${this.agentId}`);
+          } else if (status === 'CLOSED' || status === 'CHANNEL_ERROR' || status === 'TIMED_OUT') {
+            this.realtimeActive = false;
           }
         });
     } catch (err) {
@@ -667,8 +743,14 @@ export class OACPAgent {
     if (this.realtimeChannel && this.supabaseClient) {
       this.supabaseClient.removeChannel(this.realtimeChannel);
       this.realtimeChannel = null;
+      this.realtimeActive = false;
       console.log('[OACP] Realtime subscription stopped');
     }
+  }
+
+  /** True while the Realtime push channel is connected (push delivery live). */
+  isRealtimeConnected(): boolean {
+    return this.realtimeActive;
   }
 
   /**
@@ -872,6 +954,8 @@ export class OACPAgent {
     console.log(
       `[OACP] Received ${msg.message_type} from ${msg.sender_agent_id?.substring(0, 8)}...`,
     );
+
+    msg = this.unsealEnvelope(msg);
 
     // Dispatch to type-specific handlers
     const typeHandlers = this.messageHandlers.get(msg.message_type) || [];

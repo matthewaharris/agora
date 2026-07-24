@@ -138,6 +138,8 @@ export interface MessageEnvelope {
   timestamp: string;
   correlation_id?: string;
   sequence?: number;
+  /** Set by the SDK when a sealed payload (RFC 001 §4) was decrypted locally */
+  was_sealed?: boolean;
 }
 
 /**
