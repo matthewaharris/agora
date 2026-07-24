@@ -63,6 +63,8 @@ export class OACPAgent {
   private config: AgentConfig;
   private keypair: OACPKeypair;
   private ownerKeypair: OACPKeypair;
+  // Account owner key (RFC 003): undefined = not yet fetched, null = not attached
+  private accountOwnerKey: string | null | undefined = undefined;
   private agentId: string | null = null;
   private registryToken: string | null = null;
   private heartbeatTimer: ReturnType<typeof setInterval> | null = null;
@@ -153,6 +155,55 @@ export class OACPAgent {
    */
   getOwnerKeypair(): OACPKeypair {
     return { ...this.ownerKeypair };
+  }
+
+  /**
+   * Attach this agent to an owner account (RFC 003 §2.2) using a
+   * single-use code the owner generated in the dashboard. After attaching,
+   * sealed messages use the account's owner key, so one browser key opens
+   * every attached agent's sealed threads.
+   */
+  async attachOwner(code: string): Promise<{ owner_id: string; owner_public_key: string | null }> {
+    if (!this.agentId || !this.registryToken) {
+      throw new Error('Agent must be registered before attaching to an owner');
+    }
+    const response = await fetch(`${this.apiBaseUrl}/owners/attach`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${this.registryToken}`,
+      },
+      body: JSON.stringify({ agent_id: this.agentId, code }),
+    });
+    if (!response.ok) {
+      const error = (await response.json()) as ApiError;
+      throw new Error(`Owner attach failed (${response.status}): ${error.error}`);
+    }
+    // deno-lint-ignore no-explicit-any
+    const data = (await response.json()) as any;
+    this.accountOwnerKey =
+      typeof data.owner_public_key === 'string' ? data.owner_public_key : null;
+    console.log(`[OACP] Attached to owner account ${data.owner_id}`);
+    return { owner_id: data.owner_id, owner_public_key: this.accountOwnerKey ?? null };
+  }
+
+  /**
+   * The account owner key for this agent, fetched once from its own card.
+   * @private
+   */
+  private async resolveAccountOwnerKey(): Promise<string | null> {
+    if (this.accountOwnerKey !== undefined) return this.accountOwnerKey;
+    if (!this.agentId) return null;
+    try {
+      const card = await this.getAgentCard(this.agentId);
+      const key = card?.owner_public_key;
+      this.accountOwnerKey =
+        typeof key === 'string' && /^[0-9a-fA-F]{64}$/.test(key) ? key : null;
+    } catch {
+      // Transient lookup failure — don't cache; fall back this send only
+      return null;
+    }
+    return this.accountOwnerKey;
   }
 
   /** Check if the agent is registered */
@@ -543,16 +594,19 @@ export class OACPAgent {
           `[OACP] Cannot seal: no public key found for recipient ${recipientId}`,
         );
       }
+      // Owner slots: both humans can decrypt their agents' sealed threads
+      // (RFC 001 §3.1 / RFC 003). Prefer the account owner key (one key
+      // for all the human's agents); fall back to the per-machine key.
+      // Owners of *participants* only — the registry can't read anything.
+      const ownOwnerKey = (await this.resolveAccountOwnerKey()) ?? this.ownerKeypair.publicKey;
       const readers: SealReader[] = [
         { agentId: recipientId, ed25519PublicKey: recipientCard.public_key },
         { agentId: this.agentId, ed25519PublicKey: this.keypair.publicKey },
-        // Owner slots: both humans can decrypt their agents' sealed
-        // threads (dashboard, RFC 001 §3.1). Owners of *participants*
-        // only — the registry still can't read anything.
-        { agentId: `owner:${this.agentId}`, ed25519PublicKey: this.ownerKeypair.publicKey },
+        { agentId: `owner:${this.agentId}`, ed25519PublicKey: ownOwnerKey },
       ];
-      const recipientOwnerKey = (recipientCard.metadata as Record<string, unknown> | undefined)
-        ?.owner_public_key;
+      const recipientOwnerKey =
+        recipientCard.owner_public_key ??
+        (recipientCard.metadata as Record<string, unknown> | undefined)?.owner_public_key;
       if (typeof recipientOwnerKey === 'string' && /^[0-9a-fA-F]{64}$/.test(recipientOwnerKey)) {
         readers.push({ agentId: `owner:${recipientId}`, ed25519PublicKey: recipientOwnerKey });
       }

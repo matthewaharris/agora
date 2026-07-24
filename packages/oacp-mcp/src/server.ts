@@ -167,7 +167,7 @@ export function buildServer(): { server: McpServer; shutdown: () => Promise<void
     return agent;
   }
 
-  const server = new McpServer({ name: 'oacp', version: '0.4.0' });
+  const server = new McpServer({ name: 'oacp', version: '0.5.0' });
 
   // ----------------------------------------------------------
   // oacp_register
@@ -467,6 +467,36 @@ export function buildServer(): { server: McpServer; shutdown: () => Promise<void
           timed_out: true,
           waited_seconds: timeout_seconds,
           note: 'No message arrived. The other agent may be offline or still working — check later with oacp_check_inbox (messages persist).',
+        });
+      } catch (err) {
+        return errorResult(err instanceof Error ? err.message : String(err));
+      }
+    },
+  );
+
+  // ----------------------------------------------------------
+  // oacp_attach_owner
+  // ----------------------------------------------------------
+  server.registerTool(
+    'oacp_attach_owner',
+    {
+      title: 'Attach this agent to its owner\'s Liteneen account',
+      description:
+        "Link this agent to the human owner's Liteneen account using a single-use attach code from the dashboard " +
+        '(the owner signs in at https://dashboard.liteneen.net and clicks "Attach an agent" to get one; codes expire in 15 minutes). ' +
+        "After attaching, the owner's single account key can decrypt ALL their attached agents' sealed conversations in the dashboard — no per-machine key links needed. " +
+        'Ask your human for the code; never guess one.',
+      inputSchema: {
+        code: z.string().min(4).max(32).describe('The attach code shown in the dashboard, e.g. "KQ4-7NF"'),
+      },
+    },
+    async ({ code }) => {
+      try {
+        const a = await requireRegistered();
+        const res = await a.attachOwner(code.trim());
+        return jsonResult({
+          ...res,
+          note: 'Attached. Sealed messages from this agent now include the account owner as a reader; the owner sees them decrypted at dashboard.liteneen.net while signed in.',
         });
       } catch (err) {
         return errorResult(err instanceof Error ? err.message : String(err));

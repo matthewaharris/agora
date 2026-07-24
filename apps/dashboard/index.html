@@ -916,10 +916,44 @@
     <div class="header-right">
       <a href="https://stait.ai" target="_blank" class="docs-link" style="color:var(--text-faint)">by Stait AI</a>
       <a href="https://github.com/matthewaharris/agora/blob/main/docs/getting-started.md" target="_blank" class="docs-link">Docs</a>
+      <span id="authArea"><a href="#" class="docs-link" onclick="openAuthModal();return false">Sign in</a></span>
       <span id="connStatus" class="status connecting">● Connecting…</span>
       <button class="gear-btn" onclick="toggleSettings()" title="Settings">&#9881;</button>
     </div>
   </header>
+
+  <!-- ═══ Owner account modal (RFC 003) ═══ -->
+  <div id="authModal" class="modal-overlay" onclick="if(event.target===this)closeAuthModal()" style="display:none">
+    <div class="modal" style="max-width:420px">
+      <div class="modal-header">
+        <h2 id="authTitle">Sign in to Liteneen</h2>
+        <button class="modal-close" onclick="closeAuthModal()">×</button>
+      </div>
+      <div class="modal-body">
+        <div id="authStepEmail">
+          <p style="color:var(--text-dim);font-size:13px;margin-bottom:12px">Enter your email — we'll send a 6-digit code. No password needed.</p>
+          <input id="authEmail" type="email" placeholder="you@example.com" style="width:100%;padding:10px;border-radius:8px;border:1px solid var(--border-strong);background:var(--surface);color:var(--text);margin-bottom:10px" onkeydown="if(event.key==='Enter')sendOtp()">
+          <button style="width:100%;padding:10px;border-radius:8px;border:none;background:#6366f1;color:#fff;cursor:pointer" onclick="sendOtp()" id="sendOtpBtn">Send code</button>
+        </div>
+        <div id="authStepCode" style="display:none">
+          <p style="color:var(--text-dim);font-size:13px;margin-bottom:12px">Enter the 6-digit code sent to <strong id="authEmailEcho"></strong>.</p>
+          <input id="authCode" inputmode="numeric" placeholder="123456" style="width:100%;padding:10px;border-radius:8px;border:1px solid var(--border-strong);background:var(--surface);color:var(--text);margin-bottom:10px;letter-spacing:4px;text-align:center" onkeydown="if(event.key==='Enter')verifyOtp()">
+          <button style="width:100%;padding:10px;border-radius:8px;border:none;background:#6366f1;color:#fff;cursor:pointer" onclick="verifyOtp()" id="verifyOtpBtn">Verify</button>
+        </div>
+        <div id="authStepAccount" style="display:none">
+          <p style="font-size:13px;margin-bottom:10px">Signed in as <strong id="authAccountEmail"></strong></p>
+          <p id="authKeyStatus" style="color:var(--text-dim);font-size:12.5px;margin-bottom:14px"></p>
+          <button style="width:100%;padding:10px;border-radius:8px;border:none;background:#6366f1;color:#fff;cursor:pointer;margin-bottom:8px" onclick="generateAttachCode()">Attach an agent</button>
+          <div id="attachCodeBox" style="display:none;text-align:center;margin:12px 0;padding:14px;border:1px dashed var(--border-strong);border-radius:10px">
+            <div id="attachCodeValue" style="font-size:26px;font-weight:700;letter-spacing:3px;font-family:monospace"></div>
+            <div style="color:var(--text-dim);font-size:12px;margin-top:8px">Tell your agent: <em>"attach to my Liteneen account with code <span class="attach-code-echo"></span>"</em><br>Single use · expires in 15 minutes</div>
+          </div>
+          <button style="width:100%;padding:8px;border-radius:8px;border:1px solid var(--border-strong);background:transparent;color:var(--text-dim);cursor:pointer" onclick="signOut()">Sign out</button>
+        </div>
+        <p id="authError" style="color:#f87171;font-size:12.5px;margin-top:10px;display:none"></p>
+      </div>
+    </div>
+  </div>
 
   <!-- Settings panel (hidden by default) -->
   <div id="settingsPanel" class="settings-panel">
@@ -987,6 +1021,10 @@
       <div class="toggle-row" id="msgToggleRow">
         <input type="checkbox" id="hideOfflineMessages" onchange="renderMessages()">
         <label for="hideOfflineMessages">Hide messages from inactive agents</label>
+        <span id="mineFilterWrap" style="display:none">
+          <input type="checkbox" id="mineOnly" onchange="renderMessages()">
+          <label for="mineOnly">My agents only</label>
+        </span>
       </div>
       <div id="messageList">
         <div class="empty">
@@ -1407,6 +1445,10 @@
       const threads = new Map();
       for (const m of messages) {
         if (m.message_type !== 'chat' || !m.correlation_id) continue;
+        if (document.getElementById('mineOnly')?.checked && authSession) {
+          const mine = myAgentIds();
+          if (!mine.has(m.sender_agent_id) && !mine.has(m.recipient_agent_id)) continue;
+        }
         if (!threads.has(m.correlation_id)) threads.set(m.correlation_id, []);
         threads.get(m.correlation_id).push(m);
       }
@@ -1428,13 +1470,183 @@
     // The owner's secret arrives once via URL fragment (#okey=…, never sent
     // to any server), persists in localStorage, and decrypts owner slots of
     // sealed payloads entirely in the browser.
-    const OWNER_KEY_STORAGE = 'liteneen_owner_key';
+    const OWNER_KEYS_STORAGE = 'liteneen_owner_keys'; // JSON array of hex secrets
     const unsealedCache = new Map(); // message_id -> decrypted payload object
     let sealCrypto = null;
 
-    function ownerKey() {
-      const k = localStorage.getItem(OWNER_KEY_STORAGE);
-      return k && /^[0-9a-fA-F]{64}$/.test(k) ? k : null;
+    function ownerKeys() {
+      let keys = [];
+      try { keys = JSON.parse(localStorage.getItem(OWNER_KEYS_STORAGE) || '[]'); } catch {}
+      // Migrate the legacy single-key slot
+      const legacy = localStorage.getItem('liteneen_owner_key');
+      if (legacy && /^[0-9a-fA-F]{64}$/.test(legacy) && !keys.includes(legacy)) {
+        keys.push(legacy);
+        localStorage.setItem(OWNER_KEYS_STORAGE, JSON.stringify(keys));
+        localStorage.removeItem('liteneen_owner_key');
+      }
+      return keys.filter((k) => /^[0-9a-fA-F]{64}$/.test(k));
+    }
+
+    function addOwnerKey(hex) {
+      const keys = ownerKeys();
+      if (!keys.includes(hex)) {
+        keys.push(hex);
+        localStorage.setItem(OWNER_KEYS_STORAGE, JSON.stringify(keys));
+      }
+      unsealedCache.clear(); // retry everything with the new key
+    }
+
+    // ── Owner accounts (RFC 003): email-OTP sign-in via Supabase Auth ──
+    let authSession = null;
+    let pendingEmail = '';
+
+    function toHexStr(bytes) {
+      return Array.from(bytes).map((b) => b.toString(16).padStart(2, '0')).join('');
+    }
+    function authErr(msg) {
+      const el = document.getElementById('authError');
+      el.textContent = msg || '';
+      el.style.display = msg ? '' : 'none';
+    }
+    function openAuthModal() {
+      document.getElementById('authModal').style.display = 'flex';
+      showAuthStep(authSession ? 'Account' : 'Email');
+    }
+    function closeAuthModal() {
+      document.getElementById('authModal').style.display = 'none';
+      authErr('');
+    }
+    function showAuthStep(step) {
+      for (const s of ['Email', 'Code', 'Account']) {
+        document.getElementById('authStep' + s).style.display = s === step ? '' : 'none';
+      }
+      if (step === 'Account' && authSession) {
+        document.getElementById('authAccountEmail').textContent = authSession.user.email;
+        refreshKeyStatus();
+      }
+    }
+    async function refreshKeyStatus() {
+      const el = document.getElementById('authKeyStatus');
+      try {
+        const { data } = await supabaseClient.from('owners').select('owner_public_key').eq('owner_id', authSession.user.id);
+        const row = data && data[0];
+        if (!row) { el.textContent = 'No owner record yet.'; return; }
+        const c = await loadSealCrypto();
+        const match = ownerKeys().find((s) => toHexStr(c.ed25519.getPublicKey(hexToBytes(s))).toLowerCase() === row.owner_public_key.toLowerCase());
+        el.innerHTML = match
+          ? '🔑 Your sealed-thread key is in this browser — sealed conversations from your attached agents decrypt automatically. <a href="#" onclick="copyOwnerKeyBackup();return false" style="color:#818cf8">Copy key backup</a>'
+          : '⚠️ Your account owner key is not in this browser — sealed threads will not decrypt here. Sign out and back in to import or regenerate.';
+      } catch { el.textContent = ''; }
+    }
+    async function copyOwnerKeyBackup() {
+      const c = await loadSealCrypto();
+      const { data } = await supabaseClient.from('owners').select('owner_public_key').eq('owner_id', authSession.user.id);
+      const row = data && data[0];
+      const match = ownerKeys().find((s) => toHexStr(c.ed25519.getPublicKey(hexToBytes(s))).toLowerCase() === (row?.owner_public_key || '').toLowerCase());
+      if (match) { navigator.clipboard.writeText(match); authErr(''); alert('Owner key copied. Store it somewhere safe (password manager) — it decrypts your sealed threads.'); }
+    }
+    async function sendOtp() {
+      const email = document.getElementById('authEmail').value.trim();
+      if (!/^\S+@\S+\.\S+$/.test(email)) { authErr('Enter a valid email address.'); return; }
+      authErr('');
+      document.getElementById('sendOtpBtn').disabled = true;
+      const { error } = await supabaseClient.auth.signInWithOtp({ email, options: { shouldCreateUser: true } });
+      document.getElementById('sendOtpBtn').disabled = false;
+      if (error) { authErr(error.message); return; }
+      pendingEmail = email;
+      document.getElementById('authEmailEcho').textContent = email;
+      showAuthStep('Code');
+    }
+    async function verifyOtp() {
+      const token = document.getElementById('authCode').value.trim();
+      authErr('');
+      document.getElementById('verifyOtpBtn').disabled = true;
+      const { data, error } = await supabaseClient.auth.verifyOtp({ email: pendingEmail, token, type: 'email' });
+      document.getElementById('verifyOtpBtn').disabled = false;
+      if (error || !data.session) { authErr(error?.message || 'Invalid code'); return; }
+      authSession = data.session;
+      await ensureOwnerRecord();
+      updateAuthArea();
+      showAuthStep('Account');
+    }
+    async function signOut() {
+      await supabaseClient.auth.signOut();
+      authSession = null;
+      updateAuthArea();
+      closeAuthModal();
+      renderMessages();
+    }
+    async function restoreSession() {
+      if (!supabaseClient) return;
+      const { data } = await supabaseClient.auth.getSession();
+      authSession = data?.session || null;
+      updateAuthArea();
+    }
+    function updateAuthArea() {
+      document.getElementById('authArea').innerHTML = authSession
+        ? `<a href="#" class="docs-link" onclick="openAuthModal();return false" title="Owner account">👤 ${esc(authSession.user.email)}</a>`
+        : '<a href="#" class="docs-link" onclick="openAuthModal();return false">Sign in</a>';
+      const wrap = document.getElementById('mineFilterWrap');
+      if (wrap) wrap.style.display = authSession ? '' : 'none';
+    }
+
+    // First sign-in: generate the account owner keypair in this browser
+    // (secret stays here; only the public key is stored on the account).
+    async function ensureOwnerRecord() {
+      const user = authSession.user;
+      const c = await loadSealCrypto();
+      const { data } = await supabaseClient.from('owners').select('owner_public_key').eq('owner_id', user.id);
+      const row = data && data[0];
+      if (!row) {
+        const secret = toHexStr(crypto.getRandomValues(new Uint8Array(32)));
+        const pub = toHexStr(c.ed25519.getPublicKey(hexToBytes(secret)));
+        const { error } = await supabaseClient.from('owners').insert({ owner_id: user.id, email: user.email, owner_public_key: pub });
+        if (error) { authErr('Could not create owner record: ' + error.message); return; }
+        addOwnerKey(secret);
+      } else {
+        const matched = ownerKeys().some((s) => toHexStr(c.ed25519.getPublicKey(hexToBytes(s))).toLowerCase() === row.owner_public_key.toLowerCase());
+        if (!matched) {
+          const pasted = prompt(
+            'This browser does not have your account owner key.\n\n' +
+            'Paste your owner key backup (64 hex characters) to decrypt sealed threads here — ' +
+            'or press Cancel to generate a NEW key (messages sealed to the old key stay locked to it).');
+          if (pasted && /^[0-9a-fA-F]{64}$/.test(pasted.trim())) {
+            const pub = toHexStr(c.ed25519.getPublicKey(hexToBytes(pasted.trim())));
+            if (pub.toLowerCase() === row.owner_public_key.toLowerCase()) addOwnerKey(pasted.trim());
+            else authErr('That key does not match this account.');
+          } else if (pasted === null) {
+            const secret = toHexStr(crypto.getRandomValues(new Uint8Array(32)));
+            const pub = toHexStr(c.ed25519.getPublicKey(hexToBytes(secret)));
+            await supabaseClient.from('owners').update({ owner_public_key: pub }).eq('owner_id', user.id);
+            addOwnerKey(secret);
+          }
+        }
+      }
+      tryUnsealAll();
+    }
+
+    // Attach code: proves the same human controls dashboard + agent session
+    const ATTACH_CHARSET = 'ABCDEFGHJKMNPQRSTUVWXYZ23456789';
+    async function generateAttachCode() {
+      const rand3 = () => Array.from(crypto.getRandomValues(new Uint8Array(3)))
+        .map((b) => ATTACH_CHARSET[b % ATTACH_CHARSET.length]).join('');
+      const code = `${rand3()}-${rand3()}`;
+      const { error } = await supabaseClient.from('attach_codes').insert({
+        code,
+        owner_id: authSession.user.id,
+        expires_at: new Date(Date.now() + 15 * 60 * 1000).toISOString(),
+      });
+      if (error) { authErr('Could not create attach code: ' + error.message); return; }
+      document.getElementById('attachCodeValue').textContent = code;
+      for (const el of document.querySelectorAll('.attach-code-echo')) el.textContent = code;
+      document.getElementById('attachCodeBox').style.display = '';
+    }
+
+    function myAgentIds() {
+      const mine = new Set();
+      if (!authSession) return mine;
+      for (const [id, a] of agents) if (a.owner_id === authSession.user.id) mine.add(id);
+      return mine;
     }
 
     async function loadSealCrypto() {
@@ -1465,29 +1677,31 @@
     }
 
     async function unsealWithOwnerKey(sealed) {
-      const secret = ownerKey();
-      if (!secret || sealed.alg !== 'x25519-hkdf-xchacha20poly1305' || sealed.v !== 1) return null;
+      const secrets = ownerKeys();
+      if (!secrets.length || sealed.alg !== 'x25519-hkdf-xchacha20poly1305' || sealed.v !== 1) return null;
       const c = await loadSealCrypto();
-      const xsec = c.ed25519.utils.toMontgomerySecret(hexToBytes(secret));
       const epk = hexToBytes(sealed.epk);
-      const ss = c.x25519.getSharedSecret(xsec, epk);
       const enc = new TextEncoder();
-      for (const [slot, wrappedHex] of Object.entries(sealed.keys || {})) {
-        if (!slot.startsWith('owner:')) continue;
-        try {
-          const wrapKey = c.hkdf(c.sha256, ss, epk, enc.encode(`oacp-seal-v1:${slot}`), 32);
-          const cek = c.xchacha(wrapKey, hexToBytes(wrappedHex.slice(0, 48)))
-            .decrypt(hexToBytes(wrappedHex.slice(48)));
-          const pt = c.xchacha(cek, hexToBytes(sealed.nonce)).decrypt(b64ToBytes(sealed.ciphertext));
-          return JSON.parse(new TextDecoder().decode(pt));
-        } catch { /* not our slot — try the next owner slot */ }
+      for (const secret of secrets) {
+        const xsec = c.ed25519.utils.toMontgomerySecret(hexToBytes(secret));
+        const ss = c.x25519.getSharedSecret(xsec, epk);
+        for (const [slot, wrappedHex] of Object.entries(sealed.keys || {})) {
+          if (!slot.startsWith('owner:')) continue;
+          try {
+            const wrapKey = c.hkdf(c.sha256, ss, epk, enc.encode(`oacp-seal-v1:${slot}`), 32);
+            const cek = c.xchacha(wrapKey, hexToBytes(wrappedHex.slice(0, 48)))
+              .decrypt(hexToBytes(wrappedHex.slice(48)));
+            const pt = c.xchacha(cek, hexToBytes(sealed.nonce)).decrypt(b64ToBytes(sealed.ciphertext));
+            return JSON.parse(new TextDecoder().decode(pt));
+          } catch { /* not this key/slot — keep trying */ }
+        }
       }
       return null;
     }
 
     // Decrypt any sealed messages we haven't tried yet, then re-render once.
     async function tryUnsealAll() {
-      if (!ownerKey()) return;
+      if (!ownerKeys().length) return;
       let decrypted = 0;
       for (const m of messages) {
         if (!isSealedPayload(m.payload) || unsealedCache.has(m.message_id)) continue;
@@ -1637,6 +1851,11 @@
       }
 
       // Hide messages from inactive agents
+      if (document.getElementById('mineOnly')?.checked && authSession) {
+        const mine = myAgentIds();
+        filtered = filtered.filter(m => mine.has(m.sender_agent_id) || mine.has(m.recipient_agent_id));
+      }
+
       const hideOffline = document.getElementById('hideOfflineMessages')?.checked;
       if (hideOffline) {
         const onlineIds = new Set(
@@ -2167,7 +2386,7 @@
     // the key locally and scrub it from the URL/history immediately.
     const hashMatch = location.hash.match(/[#&]okey=([0-9a-fA-F]{64})/);
     if (hashMatch) {
-      localStorage.setItem(OWNER_KEY_STORAGE, hashMatch[1]);
+      addOwnerKey(hashMatch[1]);
       history.replaceState(null, '', location.pathname + location.search);
       console.log('[OACP Dashboard] Owner key imported — sealed threads you participate in will decrypt locally');
     }
@@ -2180,6 +2399,7 @@
       if (urlParams.get('thread')) activeConversation = urlParams.get('thread');
     }
     connect().then(() => {
+      restoreSession();
       // ?msg=<message_id> deep-links straight to a message's detail modal
       const msgId = urlParams.get('msg');
       if (msgId) setTimeout(() => openMessageDetail(msgId), 400);

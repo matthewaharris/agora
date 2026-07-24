@@ -22,6 +22,8 @@ export interface AgentCard {
   public_key: string;
   protocols_supported: string[];
   metadata: AgentMetadata & Record<string, unknown>;
+  /** Account owner's encryption public key (RFC 003), joined by the registry when the agent is attached */
+  owner_public_key?: string | null;
   last_seen_at: string | null;
   created_at: string;
   updated_at: string;

@@ -464,7 +464,7 @@ async function handleDiscover(req: Request): Promise<Response> {
   let query = supabase
     .from('agents')
     .select(
-      'agent_id, name, owner_handle, description, endpoint_url, capabilities, status, public_key, protocols_supported, metadata, last_seen_at, created_at, updated_at',
+      'agent_id, name, owner_handle, description, endpoint_url, capabilities, status, public_key, protocols_supported, metadata, last_seen_at, created_at, updated_at, owners:owner_id(owner_public_key)',
       { count: 'exact' },
     );
 
@@ -497,11 +497,108 @@ async function handleDiscover(req: Request): Promise<Response> {
     return errorResponse('Failed to query agents', 500);
   }
 
+  // Flatten the owners join: account owner_public_key (RFC 003) rides on
+  // the card so senders can seal to the owner without a second lookup.
+  const agents = (data || []).map((a: Record<string, unknown>) => {
+    const owners = a.owners as { owner_public_key?: string } | null;
+    const { owners: _drop, ...card } = a;
+    return { ...card, owner_public_key: owners?.owner_public_key ?? null };
+  });
+
   return jsonResponse({
-    agents: data || [],
+    agents,
     total: count || 0,
     page,
     page_size: pageSize,
+  });
+}
+
+/**
+ * POST /owners/attach — Link an agent to an owner account (RFC 003 §2.2)
+ *
+ * Agent-authenticated (registry token). Consumes a single-use, short-lived
+ * attach code minted by the signed-in owner in the dashboard.
+ */
+async function handleOwnersAttach(req: Request): Promise<Response> {
+  let body: Record<string, unknown>;
+  try {
+    body = await req.json();
+  } catch {
+    return errorResponse('Invalid JSON body', 400);
+  }
+
+  const idErrors = validateUUID(body.agent_id, 'agent_id');
+  if (idErrors.length > 0) {
+    return validationErrorResponse(idErrors);
+  }
+  if (typeof body.code !== 'string' || !/^[A-Za-z0-9-]{4,32}$/.test(body.code)) {
+    return errorResponse('code must be a valid attach code', 400);
+  }
+
+  const token = extractBearerToken(req);
+  if (!token) {
+    return errorResponse('Authorization header with Bearer token required', 401);
+  }
+
+  const supabase = getSupabaseAdmin();
+  const tokenHash = await hashToken(token);
+
+  const { data: agent, error: agentError } = await supabase
+    .from('agents')
+    .select('agent_id, registry_token')
+    .eq('agent_id', body.agent_id)
+    .single();
+
+  if (agentError || !agent) {
+    return errorResponse('Agent not found', 404);
+  }
+  if (agent.registry_token !== tokenHash) {
+    return errorResponse('Invalid registry token', 403);
+  }
+
+  const code = (body.code as string).toUpperCase();
+  const { data: attachCode } = await supabase
+    .from('attach_codes')
+    .select('code, owner_id, expires_at, used_by_agent_id')
+    .eq('code', code)
+    .single();
+
+  if (!attachCode) {
+    return errorResponse('Unknown attach code', 404);
+  }
+  if (attachCode.used_by_agent_id) {
+    return errorResponse('Attach code already used', 409);
+  }
+  if (new Date(attachCode.expires_at).getTime() < Date.now()) {
+    return errorResponse('Attach code expired', 410);
+  }
+
+  const { error: linkError } = await supabase
+    .from('agents')
+    .update({ owner_id: attachCode.owner_id })
+    .eq('agent_id', body.agent_id);
+
+  if (linkError) {
+    console.error('[OACP] Owner attach error:', linkError);
+    return errorResponse('Failed to attach agent to owner', 500);
+  }
+
+  await supabase
+    .from('attach_codes')
+    .update({ used_by_agent_id: body.agent_id })
+    .eq('code', code);
+
+  const { data: owner } = await supabase
+    .from('owners')
+    .select('owner_id, owner_public_key')
+    .eq('owner_id', attachCode.owner_id)
+    .single();
+
+  return jsonResponse({
+    agent_id: body.agent_id,
+    owner_id: attachCode.owner_id,
+    owner_public_key: owner?.owner_public_key ?? null,
+    note: 'Agent attached. Sealed messages now include the account owner as a reader.',
   });
 }
 
@@ -1540,6 +1637,9 @@ const routes: Record<string, Record<string, RouteHandler>> = {
   },
   '/heartbeat': {
     POST: (req) => handleHeartbeat(req),
+  },
+  '/owners/attach': {
+    POST: (req) => handleOwnersAttach(req),
   },
   '/discover': {
     GET: (req) => handleDiscover(req),
