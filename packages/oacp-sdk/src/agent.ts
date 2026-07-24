@@ -62,6 +62,7 @@ import type {
 export class OACPAgent {
   private config: AgentConfig;
   private keypair: OACPKeypair;
+  private ownerKeypair: OACPKeypair;
   private agentId: string | null = null;
   private registryToken: string | null = null;
   private heartbeatTimer: ReturnType<typeof setInterval> | null = null;
@@ -94,6 +95,14 @@ export class OACPAgent {
     // Resolve keypair: config.keypair → OACP_SECRET_KEY/OACP_PUBLIC_KEY env → file
     const keypairPath = config.keypairPath || DEFAULT_KEYPAIR_PATH;
     this.keypair = resolveKeypair(config.keypair, keypairPath);
+
+    // Owner keypair (RFC 001 §3.1): the human's own encryption identity,
+    // kept beside the agent keypair. Sealed messages are also wrapped for
+    // the owners of both participants, so humans can decrypt their agents'
+    // sealed threads in the dashboard without the agent's key leaving disk.
+    const ownerPath = config.ownerKeypairPath
+      || keypairPath.replace(/[^/\\]+$/, 'owner-keypair.json');
+    this.ownerKeypair = loadOrCreateKeypair(ownerPath);
 
     // Set API base URL
     const supabaseUrl = config.supabaseUrl || OACP_PUBLIC_REGISTRY_URL;
@@ -134,6 +143,16 @@ export class OACPAgent {
   /** Get the agent's Ed25519 public key (hex) */
   getPublicKey(): string {
     return this.keypair.publicKey;
+  }
+
+  /**
+   * The owner's encryption keypair (RFC 001 §3.1). The secret is meant to
+   * be handed to the owner's *own* browser (dashboard localStorage via a
+   * URL fragment) so they can decrypt their agent's sealed threads —
+   * never sent to the registry or any other party.
+   */
+  getOwnerKeypair(): OACPKeypair {
+    return { ...this.ownerKeypair };
   }
 
   /** Check if the agent is registered */
@@ -187,6 +206,10 @@ export class OACPAgent {
     if (this.config.model) {
       structuredMeta.model = this.config.model;
     }
+
+    // Advertise the owner's encryption key so counterparties can wrap
+    // sealed payloads for this agent's human too (RFC 001 §3.1)
+    structuredMeta.owner_public_key = this.ownerKeypair.publicKey;
 
     if (this.config.languages) {
       structuredMeta.languages = this.config.languages;
@@ -523,7 +546,16 @@ export class OACPAgent {
       const readers: SealReader[] = [
         { agentId: recipientId, ed25519PublicKey: recipientCard.public_key },
         { agentId: this.agentId, ed25519PublicKey: this.keypair.publicKey },
+        // Owner slots: both humans can decrypt their agents' sealed
+        // threads (dashboard, RFC 001 §3.1). Owners of *participants*
+        // only — the registry still can't read anything.
+        { agentId: `owner:${this.agentId}`, ed25519PublicKey: this.ownerKeypair.publicKey },
       ];
+      const recipientOwnerKey = (recipientCard.metadata as Record<string, unknown> | undefined)
+        ?.owner_public_key;
+      if (typeof recipientOwnerKey === 'string' && /^[0-9a-fA-F]{64}$/.test(recipientOwnerKey)) {
+        readers.push({ agentId: `owner:${recipientId}`, ed25519PublicKey: recipientOwnerKey });
+      }
       payload = sealPayload(payload, readers);
     }
 

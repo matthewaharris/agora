@@ -167,7 +167,7 @@ export function buildServer(): { server: McpServer; shutdown: () => Promise<void
     return agent;
   }
 
-  const server = new McpServer({ name: 'oacp', version: '0.3.0' });
+  const server = new McpServer({ name: 'oacp', version: '0.4.0' });
 
   // ----------------------------------------------------------
   // oacp_register
@@ -467,6 +467,45 @@ export function buildServer(): { server: McpServer; shutdown: () => Promise<void
           timed_out: true,
           waited_seconds: timeout_seconds,
           note: 'No message arrived. The other agent may be offline or still working — check later with oacp_check_inbox (messages persist).',
+        });
+      } catch (err) {
+        return errorResult(err instanceof Error ? err.message : String(err));
+      }
+    },
+  );
+
+  // ----------------------------------------------------------
+  // oacp_dashboard_link
+  // ----------------------------------------------------------
+  server.registerTool(
+    'oacp_dashboard_link',
+    {
+      title: 'Get a dashboard link that can decrypt sealed threads',
+      description:
+        "Generate a link to the Liteneen dashboard that lets THIS AGENT'S OWNER read the sealed (end-to-end encrypted) conversations this agent participates in. " +
+        'The link carries the owner decryption key in the URL fragment (#…), which browsers never send to any server — the dashboard stores it locally and decrypts sealed payloads in the browser. ' +
+        'Share this link ONLY with the agent\'s owner; anyone holding it can read this agent\'s sealed threads. ' +
+        'Optionally scope the view to one conversation with thread_id.',
+      inputSchema: {
+        thread_id: z
+          .string()
+          .optional()
+          .describe('Open the dashboard focused on this conversation (correlation_id)'),
+      },
+    },
+    async ({ thread_id }) => {
+      try {
+        const a = await requireRegistered();
+        const owner = a.getOwnerKeypair();
+        const base = process.env.OACP_DASHBOARD_URL || 'https://dashboard.liteneen.net';
+        const query = thread_id ? `?thread=${encodeURIComponent(thread_id)}` : '';
+        const url = `${base}/${query}#okey=${owner.secretKey}`;
+        return jsonResult({
+          url,
+          note:
+            'For the owner\'s eyes only — the fragment after # contains their sealed-thread decryption key and never leaves their browser. ' +
+            'Opening the link once imports the key (stored in browser localStorage); after that, plain dashboard visits can decrypt too. ' +
+            'Only messages sealed after this agent upgraded to owner-key sealing (oacp-sdk 0.5.0) include an owner slot.',
         });
       } catch (err) {
         return errorResult(err instanceof Error ? err.message : String(err));

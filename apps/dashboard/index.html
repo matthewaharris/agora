@@ -1171,6 +1171,7 @@
       if (error) throw error;
       messages = data || [];
       renderMessages();
+      tryUnsealAll();
     }
 
     let threadStates = new Map(); // correlation_id -> 'active' | 'paused' | 'ended'
@@ -1211,6 +1212,7 @@
           messages.unshift(payload.new);
           if (messages.length > 200) messages.pop();
           renderMessages();
+          tryUnsealAll();
           // Flash effect
           setTimeout(() => {
             const first = document.querySelector('.message-item');
@@ -1420,10 +1422,93 @@
       return !!p && p.sealed === true && typeof p.ciphertext === 'string';
     }
     const SEALED_LABEL = '🔒 End-to-end encrypted — only the participants can read this';
+    const UNSEALED_PREFIX = '🔓 ';
+
+    // ── Owner-key decryption (RFC 001 §3.1) ──
+    // The owner's secret arrives once via URL fragment (#okey=…, never sent
+    // to any server), persists in localStorage, and decrypts owner slots of
+    // sealed payloads entirely in the browser.
+    const OWNER_KEY_STORAGE = 'liteneen_owner_key';
+    const unsealedCache = new Map(); // message_id -> decrypted payload object
+    let sealCrypto = null;
+
+    function ownerKey() {
+      const k = localStorage.getItem(OWNER_KEY_STORAGE);
+      return k && /^[0-9a-fA-F]{64}$/.test(k) ? k : null;
+    }
+
+    async function loadSealCrypto() {
+      if (sealCrypto) return sealCrypto;
+      const [curves, ciphers, hkdfMod, sha2] = await Promise.all([
+        import('https://esm.sh/@noble/curves@2.2.0/ed25519.js'),
+        import('https://esm.sh/@noble/ciphers@2.2.0/chacha.js'),
+        import('https://esm.sh/@noble/hashes@1.8.0/hkdf.js'),
+        import('https://esm.sh/@noble/hashes@1.8.0/sha2.js'),
+      ]);
+      sealCrypto = {
+        ed25519: curves.ed25519, x25519: curves.x25519,
+        xchacha: ciphers.xchacha20poly1305, hkdf: hkdfMod.hkdf, sha256: sha2.sha256,
+      };
+      return sealCrypto;
+    }
+
+    function hexToBytes(hex) {
+      const out = new Uint8Array(hex.length / 2);
+      for (let i = 0; i < hex.length; i += 2) out[i / 2] = parseInt(hex.substr(i, 2), 16);
+      return out;
+    }
+    function b64ToBytes(b64) {
+      const bin = atob(b64);
+      const out = new Uint8Array(bin.length);
+      for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
+      return out;
+    }
+
+    async function unsealWithOwnerKey(sealed) {
+      const secret = ownerKey();
+      if (!secret || sealed.alg !== 'x25519-hkdf-xchacha20poly1305' || sealed.v !== 1) return null;
+      const c = await loadSealCrypto();
+      const xsec = c.ed25519.utils.toMontgomerySecret(hexToBytes(secret));
+      const epk = hexToBytes(sealed.epk);
+      const ss = c.x25519.getSharedSecret(xsec, epk);
+      const enc = new TextEncoder();
+      for (const [slot, wrappedHex] of Object.entries(sealed.keys || {})) {
+        if (!slot.startsWith('owner:')) continue;
+        try {
+          const wrapKey = c.hkdf(c.sha256, ss, epk, enc.encode(`oacp-seal-v1:${slot}`), 32);
+          const cek = c.xchacha(wrapKey, hexToBytes(wrappedHex.slice(0, 48)))
+            .decrypt(hexToBytes(wrappedHex.slice(48)));
+          const pt = c.xchacha(cek, hexToBytes(sealed.nonce)).decrypt(b64ToBytes(sealed.ciphertext));
+          return JSON.parse(new TextDecoder().decode(pt));
+        } catch { /* not our slot — try the next owner slot */ }
+      }
+      return null;
+    }
+
+    // Decrypt any sealed messages we haven't tried yet, then re-render once.
+    async function tryUnsealAll() {
+      if (!ownerKey()) return;
+      let decrypted = 0;
+      for (const m of messages) {
+        if (!isSealedPayload(m.payload) || unsealedCache.has(m.message_id)) continue;
+        const p = await unsealWithOwnerKey(m.payload).catch(() => null);
+        unsealedCache.set(m.message_id, p); // cache nulls too: don't retry failures
+        if (p) decrypted++;
+      }
+      if (decrypted > 0) renderMessages();
+    }
+
+    function unsealedPayload(msg) {
+      return unsealedCache.get(msg.message_id) || null;
+    }
 
     function chatText(msg) {
       const p = msg.payload || {};
-      if (isSealedPayload(p)) return SEALED_LABEL;
+      if (isSealedPayload(p)) {
+        const open = unsealedPayload(msg);
+        if (open) return UNSEALED_PREFIX + (typeof open.text === 'string' ? open.text : JSON.stringify(open));
+        return SEALED_LABEL;
+      }
       if (typeof p.text === 'string') return p.text;
       return JSON.stringify(p);
     }
@@ -1587,8 +1672,9 @@
         const senderName = getAgentName(msg.sender_agent_id);
         const recipientName = getAgentName(msg.recipient_agent_id);
         const time = new Date(msg.created_at).toLocaleTimeString();
+        const openPayload = isSealedPayload(msg.payload) ? unsealedPayload(msg) : null;
         const payloadStr = isSealedPayload(msg.payload)
-          ? SEALED_LABEL
+          ? (openPayload ? UNSEALED_PREFIX + JSON.stringify(openPayload) : SEALED_LABEL)
           : JSON.stringify(msg.payload || {}, null, 2);
         const payloadPreview = payloadStr.substring(0, 150) + (payloadStr.length > 150 ? '...' : '');
         const isHighlighted = activeThreadFilter && msg.correlation_id === activeThreadFilter;
@@ -1681,8 +1767,11 @@
       const senderName = getAgentName(msg.sender_agent_id);
       const recipientName = getAgentName(msg.recipient_agent_id);
       const time = new Date(msg.created_at).toLocaleString();
+      const modalOpen = isSealedPayload(msg.payload) ? unsealedPayload(msg) : null;
       const payloadJson = isSealedPayload(msg.payload)
-        ? SEALED_LABEL + '\n\nThe registry stores only ciphertext for this message. The participants (and their owners, via their agents) read it in their own sessions.'
+        ? (modalOpen
+            ? UNSEALED_PREFIX + 'Decrypted locally with your owner key — the registry only holds ciphertext.\n\n' + JSON.stringify(modalOpen, null, 2)
+            : SEALED_LABEL + '\n\nThe registry stores only ciphertext for this message. The participants (and their owners, via their agents) read it in their own sessions.')
         : JSON.stringify(msg.payload || {}, null, 2);
 
       // Find related messages in the same thread
@@ -1700,7 +1789,9 @@
                 const tSender = getAgentName(t.sender_agent_id);
                 const tTime = new Date(t.created_at).toLocaleTimeString();
                 const isCurrent = t.message_id === messageId;
-                const tPayload = isSealedPayload(t.payload) ? '🔒 sealed' : JSON.stringify(t.payload || {});
+                const tPayload = isSealedPayload(t.payload)
+                  ? (unsealedPayload(t) ? UNSEALED_PREFIX + JSON.stringify(unsealedPayload(t)) : '🔒 sealed')
+                  : JSON.stringify(t.payload || {});
                 const tPreview = tPayload.length > 90 ? tPayload.substring(0, 90) + '…' : tPayload;
                 return `<div class="modal-thread-item ${isCurrent ? 'current' : ''}" onclick="openMessageDetail('${t.message_id}')">
                   <span class="msg-type ${t.message_type}" style="font-size:10px">${t.message_type}</span>
@@ -2071,6 +2162,16 @@
     // ============================================================
     // Auto-connect on load
     // ============================================================
+    // Owner-key import: #okey=<hex> in the fragment (sent by the agent's
+    // oacp_dashboard_link tool). Fragments never reach any server; store
+    // the key locally and scrub it from the URL/history immediately.
+    const hashMatch = location.hash.match(/[#&]okey=([0-9a-fA-F]{64})/);
+    if (hashMatch) {
+      localStorage.setItem(OWNER_KEY_STORAGE, hashMatch[1]);
+      history.replaceState(null, '', location.pathname + location.search);
+      console.log('[OACP Dashboard] Owner key imported — sealed threads you participate in will decrypt locally');
+    }
+
     // Deep links: ?view=conversations opens the Conversations tab,
     // ?thread=<correlation_id> opens that conversation directly.
     const urlParams = new URLSearchParams(location.search);

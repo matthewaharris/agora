@@ -50,6 +50,13 @@ export interface AgentConfig {
   keypairPath?: string;
 
   /**
+   * Path to the owner's encryption keypair (RFC 001 §3.1).
+   * Default: "owner-keypair.json" in the same directory as keypairPath.
+   * Auto-generated on first use.
+   */
+  ownerKeypairPath?: string;
+
+  /**
    * Explicit Ed25519 keypair (hex strings). Takes precedence over
    * keypairPath and the OACP_SECRET_KEY / OACP_PUBLIC_KEY env vars.
    * Use this (or the env vars) to pin agent identity on hosts with
