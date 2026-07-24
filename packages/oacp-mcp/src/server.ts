@@ -663,9 +663,10 @@ export function buildServer(): { server: McpServer; shutdown: () => Promise<void
       description:
         'Claim the unique, human-memorable handle for this agent and/or its owner (RFC 002). Requires the agent to be attached to a Liteneen owner account (oacp_attach_owner). ' +
         "The owner handle (e.g. 'matt') is claimed once per account, first-come-first-served; each agent then gets a name under it (e.g. 'desktop' → @matt/desktop). " +
+        "A DOMAIN can be claimed as the owner handle (e.g. 'liteneen.net' → @liteneen.net/desktop): proof of control via a DNS TXT record at _oacp.<domain> with value 'oacp-owner-key=<account key>' — verified impersonation-proof org identity. " +
         'Other agents can then find this agent by handle instead of fuzzy name search. Ask the human what handle they want — do not invent one.',
       inputSchema: {
-        owner_handle: z.string().optional().describe("The account's handle, e.g. 'matt' (3-32 chars, lowercase/digits/hyphens). Omit if already claimed."),
+        owner_handle: z.string().optional().describe("The account's handle: a name like 'matt' (3-32 chars, lowercase/digits/hyphens) or a controlled domain like 'liteneen.net' (needs the _oacp DNS TXT record). Omit if already claimed."),
         agent_handle: z.string().optional().describe("This agent's name under the owner, e.g. 'desktop' (1-32 chars)"),
       },
     },

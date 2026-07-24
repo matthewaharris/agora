@@ -619,6 +619,8 @@ async function handleOwnersAttach(req: Request): Promise<Response> {
 // ============================================================
 
 const HANDLE_RE = /^[a-z0-9](?:[a-z0-9-]{0,30}[a-z0-9])?$/;
+// Domain handles (RFC 002 §4): @liteneen.net, @virtussquared.com
+const DOMAIN_HANDLE_RE = /^(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z][a-z0-9-]{1,17}$/;
 const RESERVED_HANDLES = new Set([
   'oacp', 'liteneen', 'agora', 'stait', 'admin', 'administrator', 'registry',
   'root', 'support', 'help', 'api', 'www', 'mail', 'owner', 'agent', 'agents',
@@ -653,9 +655,45 @@ async function requireAgentAuth(
 }
 
 /**
+ * Verify domain control for a domain handle (RFC 002 §4): the DNS TXT
+ * record at _oacp.<domain> must contain "oacp-owner-key=<account key>".
+ * DNS-over-HTTPS (Cloudflare, Google fallback) — the edge runtime has no
+ * raw resolver access.
+ */
+async function verifyDomainOwnerKey(domain: string, ownerPublicKey: string): Promise<{ ok: boolean; found: string[] }> {
+  const name = `_oacp.${domain}`;
+  const resolvers = [
+    `https://cloudflare-dns.com/dns-query?name=${name}&type=TXT`,
+    `https://dns.google/resolve?name=${name}&type=TXT`,
+  ];
+  const found: string[] = [];
+  for (const url of resolvers) {
+    try {
+      const res = await fetch(url, { headers: { accept: 'application/dns-json' } });
+      if (!res.ok) continue;
+      const data = await res.json();
+      for (const answer of data.Answer ?? []) {
+        // TXT data arrives quoted (and possibly chunked): "part1" "part2"
+        const txt = String(answer.data ?? '').replaceAll('"', '').replaceAll(' ', '');
+        found.push(txt);
+        if (txt === `oacp-owner-key=${ownerPublicKey.toLowerCase()}`) {
+          return { ok: true, found };
+        }
+      }
+      if (found.length > 0) break; // records exist but none matched — no need to ask the fallback
+    } catch {
+      // try next resolver
+    }
+  }
+  return { ok: false, found };
+}
+
+/**
  * POST /handles/claim — claim an owner handle and/or this agent's handle.
  * Body: { agent_id, owner_handle?, agent_handle? }
  * Agent auth; the agent must be attached to an owner account (RFC 003).
+ * A dotted owner_handle (e.g. "liteneen.net") is a domain handle: the claim
+ * verifies control via the _oacp.<domain> DNS TXT record.
  */
 async function handleHandlesClaim(req: Request): Promise<Response> {
   let body: Record<string, unknown>;
@@ -686,7 +724,7 @@ async function handleHandlesClaim(req: Request): Promise<Response> {
   const supabase = getSupabaseAdmin();
   const { data: owner } = await supabase
     .from('owners')
-    .select('owner_id, handle')
+    .select('owner_id, handle, owner_public_key')
     .eq('owner_id', agent.owner_id)
     .single();
   if (!owner) return errorResponse('Owner account not found', 404);
@@ -695,10 +733,14 @@ async function handleHandlesClaim(req: Request): Promise<Response> {
 
   if (ownerHandle !== undefined) {
     const h = String(ownerHandle).toLowerCase().replace(/^@/, '');
-    if (!HANDLE_RE.test(h) || h.length < 3) {
-      return errorResponse('owner_handle must be 3-32 chars: lowercase letters, digits, inner hyphens', 400);
+    const isDomain = DOMAIN_HANDLE_RE.test(h);
+    if (!isDomain && (!HANDLE_RE.test(h) || h.length < 3)) {
+      return errorResponse(
+        'owner_handle must be 3-32 chars (lowercase letters, digits, inner hyphens) or a domain you control (e.g. "liteneen.net")',
+        400,
+      );
     }
-    if (RESERVED_HANDLES.has(h)) {
+    if (!isDomain && RESERVED_HANDLES.has(h)) {
       return errorResponse(`Handle "@${h}" is reserved`, 403, { error_code: 'handle_reserved' });
     }
     if (owner.handle && owner.handle !== h) {
@@ -709,9 +751,24 @@ async function handleHandlesClaim(req: Request): Promise<Response> {
       );
     }
     if (!owner.handle) {
+      // Domain handles are claimed by proof of DNS control, not first-come
+      if (isDomain) {
+        const dns = await verifyDomainOwnerKey(h, owner.owner_public_key as string);
+        if (!dns.ok) {
+          return errorResponse(
+            `Domain not verified: add a DNS TXT record at _oacp.${h} with the value "oacp-owner-key=${owner.owner_public_key}" and retry once it propagates.`,
+            403,
+            { error_code: 'domain_not_verified', expected: `oacp-owner-key=${owner.owner_public_key}`, found: dns.found },
+          );
+        }
+      }
       const { error: claimError } = await supabase
         .from('owners')
-        .update({ handle: h, updated_at: new Date().toISOString() })
+        .update({
+          handle: h,
+          domain_verified_at: isDomain ? new Date().toISOString() : null,
+          updated_at: new Date().toISOString(),
+        })
         .eq('owner_id', agent.owner_id);
       if (claimError) {
         // Unique violation → someone else holds it
@@ -760,15 +817,16 @@ async function handleResolve(req: Request): Promise<Response> {
   if (!raw) return errorResponse('handle query parameter is required', 400);
 
   const parts = raw.toLowerCase().replace(/^@/, '').split('/');
-  if (parts.length > 2 || !HANDLE_RE.test(parts[0]) || (parts[1] !== undefined && !HANDLE_RE.test(parts[1]))) {
-    return errorResponse('handle must look like @owner or @owner/agent', 400);
+  const ownerOk = HANDLE_RE.test(parts[0]) || DOMAIN_HANDLE_RE.test(parts[0]);
+  if (parts.length > 2 || !ownerOk || (parts[1] !== undefined && !HANDLE_RE.test(parts[1]))) {
+    return errorResponse('handle must look like @owner or @owner/agent (owner may be a domain, e.g. @liteneen.net/desktop)', 400);
   }
   const [ownerPart, agentPart] = parts;
 
   const supabase = getSupabaseAdmin();
   const { data: owner } = await supabase
     .from('owners')
-    .select('owner_id, handle, owner_public_key')
+    .select('owner_id, handle, owner_public_key, domain_verified_at')
     .eq('handle', ownerPart)
     .maybeSingle();
   if (!owner) return errorResponse(`Handle "@${ownerPart}" is not claimed`, 404);
@@ -791,10 +849,11 @@ async function handleResolve(req: Request): Promise<Response> {
     owner_public_key: owner.owner_public_key,
   }));
 
+  const domainVerified = owner.domain_verified_at ? { domain_verified: true } : {};
   return jsonResponse(
     agentPart
-      ? { handle: raw, agent: cards[0] }
-      : { handle: `@${owner.handle}`, owner_public_key: owner.owner_public_key, agents: cards },
+      ? { handle: raw, ...domainVerified, agent: cards[0] }
+      : { handle: `@${owner.handle}`, ...domainVerified, owner_public_key: owner.owner_public_key, agents: cards },
   );
 }
 
