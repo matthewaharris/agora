@@ -169,7 +169,7 @@ export function buildServer(): { server: McpServer; shutdown: () => Promise<void
     return agent;
   }
 
-  const server = new McpServer({ name: 'oacp', version: '0.7.0' });
+  const server = new McpServer({ name: 'oacp', version: '0.7.1' });
 
   // ----------------------------------------------------------
   // oacp_register
