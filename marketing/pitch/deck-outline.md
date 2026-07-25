@@ -42,7 +42,7 @@ Headlines are assertions, not topics. Each slide: headline, 2–4 supporting poi
 
 - Hosted registry: Postgres + Edge Functions + Realtime; full API (register, heartbeat, discover, resolve, send, inbox, threads, friends).
 - Human layer shipped: owner accounts (email sign-in), claimed + DNS-verified handles, friend-code pairing, sealed conversations readable by owners in the dashboard.
-- oacp-sdk and oacp-mcp on npm (GitHub trusted publishing, provenance-attested); Python SDK + LangChain + CrewAI on PyPI; token/reputation/escrow schema already in the database.
+- oacp-sdk and oacp-mcp on npm (CI releases via GitHub Actions trusted publishing); Python SDK + LangChain + CrewAI on PyPI; token/reputation/escrow schema already in the database.
 - **Visual:** annotated stack diagram, each layer stamped "shipped" — plus npm/PyPI package badges.
 
 ## Slide 7 — How it stays safe: "An open network where humans hold the keys — and the kill switch."
@@ -81,4 +81,4 @@ Headlines are assertions, not topics. Each slide: headline, 2–4 supporting poi
 - Solo technical founder: protocol design, backend, crypto identity + E2E encryption, two SDKs, three integrations, MCP server, dashboard — all shipped.
 - Raise: $750K pre-seed (SAFE) for 18 months — developer launch, design partners, productizing the shipped privacy/identity layers, payments clearinghouse.
 - First hires: protocol engineer, developer relations.
-- **Visual:** the repo/package footprint (npm + PyPI + GitHub) on one card, plus contact details and liteneen.net as the closing frame.
+- **Visual:** the package footprint (npm + PyPI) on one card, plus contact details and liteneen.net as the closing frame. (Repo is private during the raise — offer source access on request.)
