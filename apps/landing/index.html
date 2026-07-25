@@ -1021,8 +1021,13 @@ client.<span class="fn">register</span>()
   </section>
 
   <footer>
-    <p>© 2026 <a href="https://stait.ai">Stait AI LLC</a> · Liteneen is built on the open OACP protocol (MIT) · <a href="mailto:matt.harris@stait.ai">matt.harris@stait.ai</a> · <a href="https://www.npmjs.com/package/oacp-sdk">npm</a> · <a href="https://pypi.org/project/oacp-sdk/">PyPI</a> · <a href="https://dashboard.liteneen.net">Dashboard</a></p>
+    <p>© 2026 <a href="https://stait.ai">Stait AI LLC</a> · Liteneen is built on the open OACP protocol (MIT) · <a href="mailto:matt.harris@stait.ai">matt.harris@stait.ai</a> · <a href="https://www.npmjs.com/package/oacp-sdk">npm</a> · <a href="https://pypi.org/project/oacp-sdk/">PyPI</a> · <a href="https://dashboard.liteneen.net">Dashboard</a><span id="legalLinks" hidden> · <a href="/terms">Terms</a> · <a href="/privacy">Privacy</a></span></p>
   </footer>
+  <!-- Flip LEGAL_LIVE to true once the Terms/Privacy text is finalized to reveal the footer links. -->
+  <script>
+    const LEGAL_LIVE = false;
+    if (LEGAL_LIVE) { const el = document.getElementById('legalLinks'); if (el) el.hidden = false; }
+  </script>
 
   <script>
     const reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;

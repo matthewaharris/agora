@@ -102,6 +102,10 @@ export class OACPAgent {
   // Contacts file (RFC 002 §3): local pinned-key address book
   private contactsPath!: string;
 
+  // Terms-of-Service notice returned by the registry at registration (when
+  // legal go-live is enabled); null until then.
+  private termsNotice: string | null = null;
+
   constructor(config: AgentConfig) {
     this.config = config;
 
@@ -160,6 +164,15 @@ export class OACPAgent {
   /** Get the agent's Ed25519 public key (hex) */
   getPublicKey(): string {
     return this.keypair.publicKey;
+  }
+
+  /**
+   * The Terms-of-Service notice the registry presented at registration, or
+   * null if legal go-live is not enabled. Clients should show this to the
+   * human operator.
+   */
+  getTermsNotice(): string | null {
+    return this.termsNotice;
   }
 
   /**
@@ -327,6 +340,14 @@ export class OACPAgent {
       this.agentId = data.agent_id;
       this.registryToken = data.registry_token;
       this.registered = true;
+
+      // Terms notice (surfaced by the registry when legal go-live is on).
+      // Presenting it on registration is how anonymous onboarding records
+      // acceptance of the Terms.
+      if (typeof data.terms_notice === 'string') {
+        this.termsNotice = data.terms_notice;
+        console.log(`[OACP] ${data.terms_notice}`);
+      }
 
       if (data.returning) {
         console.log(`[OACP] Welcome back — ${data.agent_id} (persistent identity)`);

@@ -944,6 +944,10 @@
         <div id="authStepEmail">
           <p style="color:var(--text-dim);font-size:13px;margin-bottom:12px">Enter your email — we'll send a sign-in code. No password needed.</p>
           <input id="authEmail" type="email" placeholder="you@example.com" style="width:100%;padding:10px;border-radius:8px;border:1px solid var(--border-strong);background:var(--surface);color:var(--text);margin-bottom:10px" onkeydown="if(event.key==='Enter')sendOtp()">
+          <label id="legalConsent" hidden style="display:flex;align-items:flex-start;gap:8px;font-size:12px;color:var(--text-dim);margin-bottom:12px;text-align:left;cursor:pointer">
+            <input type="checkbox" id="agreeTerms" style="margin-top:2px;flex-shrink:0">
+            <span>I agree to Liteneen's <a href="https://www.liteneen.net/terms" target="_blank" rel="noopener" style="color:#818cf8">Terms of Service</a> and <a href="https://www.liteneen.net/privacy" target="_blank" rel="noopener" style="color:#818cf8">Privacy Policy</a>.</span>
+          </label>
           <button style="width:100%;padding:10px;border-radius:8px;border:none;background:#6366f1;color:#fff;cursor:pointer" onclick="sendOtp()" id="sendOtpBtn">Send code</button>
         </div>
         <div id="authStepCode" style="display:none">
@@ -1631,6 +1635,15 @@
 
     // ── Owner accounts (RFC 003): email-OTP sign-in via Supabase Auth ──
     let authSession = null;
+    // Flip LEGAL_LIVE to true once the Terms/Privacy text is finalized: it
+    // reveals + requires the sign-in consent checkbox (clickwrap acceptance).
+    const LEGAL_LIVE = false;
+    if (LEGAL_LIVE) {
+      document.addEventListener('DOMContentLoaded', () => {
+        const el = document.getElementById('legalConsent');
+        if (el) el.hidden = false;
+      });
+    }
     let pendingEmail = '';
 
     function toHexStr(bytes) {
@@ -1681,6 +1694,9 @@
     async function sendOtp() {
       const email = document.getElementById('authEmail').value.trim();
       if (!/^\S+@\S+\.\S+$/.test(email)) { authErr('Enter a valid email address.'); return; }
+      if (LEGAL_LIVE && !document.getElementById('agreeTerms')?.checked) {
+        authErr('Please agree to the Terms of Service and Privacy Policy to continue.'); return;
+      }
       authErr('');
       document.getElementById('sendOtpBtn').disabled = true;
       const { error } = await supabaseClient.auth.signInWithOtp({ email, options: { shouldCreateUser: true } });

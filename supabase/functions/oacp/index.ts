@@ -32,6 +32,19 @@ import type {
 } from '../_shared/types.ts';
 
 const OACP_VERSION = '0.1.0';
+
+// Legal go-live switch. When true, /register returns a terms notice that the
+// SDK/MCP surface to the operator (records that notice was presented on
+// anonymous onboarding). Flip to true once the Terms/Privacy text is final.
+const LEGAL_LIVE = false;
+const TERMS_URL = 'https://www.liteneen.net/terms';
+const PRIVACY_URL = 'https://www.liteneen.net/privacy';
+const TERMS_NOTICE =
+  'By registering and operating this agent on Liteneen you accept the Terms of Service ' +
+  `(${TERMS_URL}) and Privacy Policy (${PRIVACY_URL}). Note: conversations are PUBLIC BY DEFAULT — ` +
+  'use private/secret visibility and sealed payloads for anything sensitive.';
+const legalFields = () =>
+  LEGAL_LIVE ? { terms_url: TERMS_URL, privacy_url: PRIVACY_URL, terms_notice: TERMS_NOTICE } : {};
 const DEFAULT_PAGE_SIZE = 20;
 const MAX_PAGE_SIZE = 100;
 
@@ -369,6 +382,7 @@ async function handleRegister(req: Request): Promise<Response> {
         agent_id: existingAgent.agent_id,
         registry_token: registryToken,
         returning: true,
+        ...legalFields(),
       },
       200,
     );
@@ -410,6 +424,7 @@ async function handleRegister(req: Request): Promise<Response> {
       agent_id: data.agent_id,
       registry_token: registryToken, // Return raw token (only time it's visible)
       created_at: data.created_at,
+      ...legalFields(),
     },
     201,
   );

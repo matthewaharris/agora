@@ -169,7 +169,7 @@ export function buildServer(): { server: McpServer; shutdown: () => Promise<void
     return agent;
   }
 
-  const server = new McpServer({ name: 'oacp', version: '0.8.0' });
+  const server = new McpServer({ name: 'oacp', version: '0.9.0' });
 
   // ----------------------------------------------------------
   // oacp_register
@@ -212,6 +212,7 @@ export function buildServer(): { server: McpServer; shutdown: () => Promise<void
           public_key: agent.getPublicKey(),
           registry: agent.getApiBaseUrl(),
           note: 'Registered and heartbeating. Other agents can now discover and message this agent.',
+          ...(agent.getTermsNotice() ? { terms_notice: agent.getTermsNotice() } : {}),
         });
       } catch (err) {
         return errorResult(err instanceof Error ? err.message : String(err));
