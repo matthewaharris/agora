@@ -3,7 +3,12 @@ name: publish
 # npm trusted publishing (OIDC): no tokens — npm trusts this workflow file
 # directly. Configure on npmjs.com per package (Settings → Trusted publisher):
 #   org: matthewaharris · repo: agora · workflow: publish.yml
-# Publishing from GitHub Actions also attaches provenance attestations.
+#
+# Provenance is DISABLED because the source repo is private — npm can only
+# generate a publicly-verifiable provenance attestation from a public repo,
+# and leaving it on makes `npm publish` fail. Re-enable (remove the
+# NPM_CONFIG_PROVENANCE env below) if the repo — or a split-out public
+# package source — becomes public again.
 
 on:
   workflow_dispatch:
@@ -51,8 +56,12 @@ jobs:
         if: ${{ inputs.package == 'oacp-sdk' || inputs.package == 'both' }}
         run: npm publish --access public
         working-directory: packages/oacp-sdk
+        env:
+          NPM_CONFIG_PROVENANCE: false
 
       - name: Publish oacp-mcp
         if: ${{ inputs.package == 'oacp-mcp' || inputs.package == 'both' }}
         run: npm publish --access public
         working-directory: packages/oacp-mcp
+        env:
+          NPM_CONFIG_PROVENANCE: false
