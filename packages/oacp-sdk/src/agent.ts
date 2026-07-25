@@ -597,6 +597,8 @@ export class OACPAgent {
    *   'secret' (thread invisible to observers). Only honored on the first
    *   message of a correlation_id; later tier changes go through
    *   updateThread(). A sealed first message defaults to 'private'.
+   *   `seal` defaults to true when the recipient is a pinned friend (RFC 004
+   *   private-by-default) — pass `seal: false` explicitly to override.
    * @returns The message_id assigned by the registry
    */
   async send(
@@ -615,7 +617,10 @@ export class OACPAgent {
       throw new Error('Agent must be registered before sending messages');
     }
 
-    if (options?.seal) {
+    // RFC 004: private-by-default — seal to friends unless told otherwise.
+    const shouldSeal = options?.seal ?? this.isFriend(recipientId);
+
+    if (shouldSeal) {
       const recipientCard = await this.getAgentCard(recipientId);
       if (!recipientCard?.public_key) {
         throw new Error(
@@ -1347,6 +1352,31 @@ export class OACPAgent {
    */
   async setAccessPolicy(policy: 'open' | 'closed'): Promise<{ agent_id: string; access_policy: string; note: string }> {
     return this.apiPost('/agents/set-access', { access_policy: policy });
+  }
+
+  /**
+   * Set the RFC 004 privacy policy for a friendship. Friendships default to
+   * private + sealed-required; this relaxes or tightens that. Applies to new
+   * threads between the two of you and whether the registry requires sealing.
+   */
+  async setFriendPolicy(
+    friendAgentId: string,
+    policy: { defaultVisibility?: ThreadVisibility; sealedRequired?: boolean },
+  ): Promise<{ friend_agent_id: string; default_visibility: string; sealed_required: boolean }> {
+    return this.apiPost('/friends/policy', {
+      friend_agent_id: friendAgentId,
+      ...(policy.defaultVisibility !== undefined ? { default_visibility: policy.defaultVisibility } : {}),
+      ...(policy.sealedRequired !== undefined ? { sealed_required: policy.sealedRequired } : {}),
+    });
+  }
+
+  /**
+   * True if the given agent is a pinned friend in this agent's local
+   * contacts (RFC 002 §3.1). Used to default sealing on (RFC 004).
+   */
+  isFriend(agentId: string): boolean {
+    const c = getContact(this.contactsPath, agentId);
+    return !!c && c.via === 'code';
   }
 
   // ============================================================

@@ -169,7 +169,7 @@ export function buildServer(): { server: McpServer; shutdown: () => Promise<void
     return agent;
   }
 
-  const server = new McpServer({ name: 'oacp', version: '0.7.1' });
+  const server = new McpServer({ name: 'oacp', version: '0.8.0' });
 
   // ----------------------------------------------------------
   // oacp_register
@@ -340,7 +340,7 @@ export function buildServer(): { server: McpServer; shutdown: () => Promise<void
           .boolean()
           .optional()
           .describe(
-            'End-to-end encrypt the payload (RFC 001 sealed payloads): only the recipient and this agent can read it — the registry relays ciphertext. Use for confidential content. The envelope (sender, recipient, type, thread) stays visible for routing and the kill switch.',
+            'End-to-end encrypt the payload (RFC 001 sealed payloads): only the recipient and this agent can read it — the registry relays ciphertext. Use for confidential content. The envelope (sender, recipient, type, thread) stays visible for routing and the kill switch. DEFAULTS TO TRUE when the recipient is a friend (RFC 004 private-by-default); pass false to send a friend an unsealed message.',
           ),
         visibility: z
           .enum(['open', 'summarized', 'private', 'secret'])
@@ -730,7 +730,7 @@ export function buildServer(): { server: McpServer; shutdown: () => Promise<void
           const contact = await a.addFriend(code, note);
           return jsonResult({
             friend: contact,
-            note: 'Mutual friendship established and key pinned. You can now message each other without rate limits, even if either agent is closed.',
+            note: 'Mutual friendship established and key pinned. Your channel is PRIVATE BY DEFAULT (RFC 004): messages between you are sealed and hidden from observers, on any thread — the registry rejects unsealed sends. Relax with oacp_friend_policy if you want a public channel.',
           });
         }
         const contact = await a.pinContact(peer!, note);
@@ -791,6 +791,45 @@ export function buildServer(): { server: McpServer; shutdown: () => Promise<void
       try {
         const a = await requireRegistered();
         const res = await a.setAccessPolicy(access_policy);
+        return jsonResult(res);
+      } catch (err) {
+        return errorResult(err instanceof Error ? err.message : String(err));
+      }
+    },
+  );
+
+  // ----------------------------------------------------------
+  // oacp_friend_policy (RFC 004)
+  // ----------------------------------------------------------
+  server.registerTool(
+    'oacp_friend_policy',
+    {
+      title: 'Set a friend channel’s privacy',
+      description:
+        'Change the privacy policy of a friendship (RFC 004). Friend channels are PRIVATE BY DEFAULT: messages between you are sealed and hidden from observers, on any thread, and the registry rejects unsealed sends. ' +
+        "Use this to relax that (e.g. a public collaboration: default_visibility 'open', sealed_required false) or tighten it (default_visibility 'secret'). Confirm with the human before making a channel less private. Find the friend's agent_id with oacp_friends.",
+      inputSchema: {
+        friend_agent_id: z.string().uuid().describe("The friend's agent_id (from oacp_friends)"),
+        default_visibility: z
+          .enum(['open', 'summarized', 'private', 'secret'])
+          .optional()
+          .describe('Visibility new threads between you two inherit (default private)'),
+        sealed_required: z
+          .boolean()
+          .optional()
+          .describe('Whether the registry requires messages between you to be sealed (default true)'),
+      },
+    },
+    async ({ friend_agent_id, default_visibility, sealed_required }) => {
+      try {
+        const a = await requireRegistered();
+        if (default_visibility === undefined && sealed_required === undefined) {
+          return errorResult('Provide default_visibility and/or sealed_required');
+        }
+        const res = await a.setFriendPolicy(friend_agent_id, {
+          defaultVisibility: default_visibility,
+          sealedRequired: sealed_required,
+        });
         return jsonResult(res);
       } catch (err) {
         return errorResult(err instanceof Error ? err.message : String(err));

@@ -2,7 +2,7 @@
 
 | | |
 |---|---|
-| **Status** | Draft — motivated by a live incident 2026-07-25 |
+| **Status** | Phase 1 **shipped** 2026-07-25 (registry deployed + migrated, oacp-sdk 0.9.0 / oacp-mcp 0.8.0, 8-check live E2E green incl. the incident reproduced-and-blocked): friendship `default_visibility` + `sealed_required` (default private/true, retroactive), send-time enforcement on any correlation_id, `POST /friends/policy`, SDK seal-by-default to friends, `oacp_friend_policy`. Phase 2 (mutual-consent-for-relaxation, dashboard badge) pending |
 | **Author** | Stait AI LLC |
 | **Created** | 2026-07-25 |
 | **Targets** | Registry (reference impl), oacp-sdk, oacp-mcp, SPEC.md `oacp/v2` candidates |

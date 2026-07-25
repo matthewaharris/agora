@@ -50,6 +50,7 @@ const RATE_LIMITS: Record<string, { window: number; max: number }> = {
   '/handles/claim': { window: 60, max: 10 },
   '/friends/code': { window: 60, max: 10 },
   '/friends/redeem': { window: 60, max: 10 },
+  '/friends/policy': { window: 60, max: 20 },
   '/resolve': { window: 60, max: 60 },
   '/discover': { window: 60, max: 60 },
   '/collect-payment': { window: 60, max: 30 },
@@ -947,16 +948,28 @@ function friendPair(a: string, b: string): { lo: string; hi: string } {
   return a < b ? { lo: a, hi: b } : { lo: b, hi: a };
 }
 
-async function areFriends(agentA: string, agentB: string): Promise<boolean> {
+/**
+ * Return the friendship edge between two agents (with its RFC 004 privacy
+ * policy) or null if they are not friends.
+ */
+async function getFriendship(
+  agentA: string,
+  agentB: string,
+  // deno-lint-ignore no-explicit-any
+): Promise<{ default_visibility: string; sealed_required: boolean } | null> {
   const { lo, hi } = friendPair(agentA, agentB);
   const supabase = getSupabaseAdmin();
   const { data } = await supabase
     .from('friendships')
-    .select('agent_lo')
+    .select('default_visibility, sealed_required')
     .eq('agent_lo', lo)
     .eq('agent_hi', hi)
     .maybeSingle();
-  return !!data;
+  return data ?? null;
+}
+
+async function areFriends(agentA: string, agentB: string): Promise<boolean> {
+  return (await getFriendship(agentA, agentB)) !== null;
 }
 
 /**
@@ -1049,7 +1062,7 @@ async function handleFriendsList(req: Request): Promise<Response> {
   const supabase = getSupabaseAdmin();
   const { data: edges } = await supabase
     .from('friendships')
-    .select('agent_lo, agent_hi, pinned_key_lo, pinned_key_hi, created_at')
+    .select('agent_lo, agent_hi, pinned_key_lo, pinned_key_hi, default_visibility, sealed_required, created_at')
     .or(`agent_lo.eq.${me.agent_id},agent_hi.eq.${me.agent_id}`);
 
   const friends = [];
@@ -1074,11 +1087,81 @@ async function handleFriendsList(req: Request): Promise<Response> {
       pinned_key: pinnedKey,
       current_key: card.public_key,
       key_changed: pinnedKey !== card.public_key,
+      default_visibility: e.default_visibility,
+      sealed_required: e.sealed_required,
       friends_since: e.created_at,
     });
   }
 
   return jsonResponse({ friends, total: friends.length });
+}
+
+/**
+ * POST /friends/policy — set the RFC 004 privacy policy for a friendship.
+ * Body: { agent_id, friend_agent_id, default_visibility?, sealed_required? }
+ * Agent auth; the caller must be one of the two friends. Either friend may
+ * change the policy (v1 — mutual-consent-for-relaxation is a future refinement).
+ */
+async function handleFriendPolicy(req: Request): Promise<Response> {
+  let body: Record<string, unknown>;
+  try {
+    body = await req.json();
+  } catch {
+    return errorResponse('Invalid JSON body', 400);
+  }
+
+  const auth = await requireAgentAuth(req, body.agent_id);
+  if ('error' in auth) return auth.error;
+  const me = auth.agent;
+
+  const friendId = body.friend_agent_id;
+  const friendIdErrors = validateUUID(friendId, 'friend_agent_id');
+  if (friendIdErrors.length > 0) return validationErrorResponse(friendIdErrors);
+
+  const vis = body.default_visibility as string | undefined;
+  if (vis !== undefined && !['open', 'summarized', 'private', 'secret'].includes(vis)) {
+    return errorResponse("default_visibility must be one of: open, summarized, private, secret", 400);
+  }
+  const sealedRequired = body.sealed_required;
+  if (sealedRequired !== undefined && typeof sealedRequired !== 'boolean') {
+    return errorResponse('sealed_required must be a boolean', 400);
+  }
+  if (vis === undefined && sealedRequired === undefined) {
+    return errorResponse('Provide default_visibility and/or sealed_required', 400);
+  }
+
+  const { lo, hi } = friendPair(me.agent_id, friendId as string);
+  const supabase = getSupabaseAdmin();
+  const { data: existing } = await supabase
+    .from('friendships')
+    .select('default_visibility, sealed_required')
+    .eq('agent_lo', lo)
+    .eq('agent_hi', hi)
+    .maybeSingle();
+  if (!existing) {
+    return errorResponse('You are not friends with that agent', 403, { error_code: 'not_friends' });
+  }
+
+  const update: Record<string, unknown> = {};
+  if (vis !== undefined) update.default_visibility = vis;
+  if (sealedRequired !== undefined) update.sealed_required = sealedRequired;
+
+  const { error } = await supabase
+    .from('friendships')
+    .update(update)
+    .eq('agent_lo', lo)
+    .eq('agent_hi', hi);
+  if (error) {
+    console.error('[OACP] Friend policy update error:', error);
+    return errorResponse('Failed to update friendship policy', 500);
+  }
+
+  return jsonResponse({
+    friend_agent_id: friendId,
+    default_visibility: vis ?? existing.default_visibility,
+    sealed_required: sealedRequired ?? existing.sealed_required,
+    note: 'Friendship privacy policy updated. It governs new threads between the two of you and whether the registry requires sealing.',
+  });
 }
 
 /**
@@ -1217,7 +1300,9 @@ async function handleMessageSend(req: Request): Promise<Response> {
   // RFC 002 §3.5: access policy — closed agents accept friends only (with a
   // reply carve-out for threads the closed agent started); open agents rate
   // limit non-friends per sender-recipient pair.
-  const senderIsFriend = await areFriends(senderAgentId, recipient.agent_id);
+  // RFC 004: the friendship also carries a privacy policy applied below.
+  const friendship = await getFriendship(senderAgentId, recipient.agent_id);
+  const senderIsFriend = friendship !== null;
   if (!senderIsFriend) {
     if (recipient.access_policy === 'closed') {
       let replyAllowed = false;
@@ -1267,6 +1352,17 @@ async function handleMessageSend(req: Request): Promise<Response> {
   }
   const isSealed = (body.payload as Record<string, unknown> | undefined)?.sealed === true;
 
+  // RFC 004: private-by-default between friends. Enforced on EVERY message
+  // between the pair, on any correlation_id — this is what closes the
+  // "reply on a brand-new open thread" leak that thread-level rules miss.
+  if (friendship?.sealed_required && !isSealed) {
+    return errorResponse(
+      `You and ${recipient.name} are friends with a sealed channel — messages must be end-to-end encrypted. Send with seal: true, or relax the channel via /friends/policy.`,
+      400,
+      { error_code: 'seal_required_by_friendship' },
+    );
+  }
+
   // Thread control: reject sends on paused/ended threads; resolve visibility
   let threadVisibility: string | null = null;
   if (body.correlation_id) {
@@ -1289,9 +1385,13 @@ async function handleMessageSend(req: Request): Promise<Response> {
       // (tier changes go through POST /threads/update, upgrades only).
       threadVisibility = threadState.visibility;
     } else {
-      // Thread creation. A sealed first message with no explicit tier defaults
-      // to 'private' — you cannot claim public visibility while hiding contents.
-      threadVisibility = requestedVisibility ?? (isSealed ? 'private' : 'open');
+      // Thread creation. Precedence: explicit request → friendship default
+      // (RFC 004) → sealed-implies-private → global open default. A new thread
+      // between friends inherits the pair's default_visibility, so a
+      // counterparty opening a fresh thread can't accidentally publish it.
+      threadVisibility = requestedVisibility
+        ?? friendship?.default_visibility
+        ?? (isSealed ? 'private' : 'open');
     }
 
     if (isSealed && (threadVisibility === 'open' || threadVisibility === 'summarized')) {
@@ -2440,6 +2540,9 @@ const routes: Record<string, Record<string, RouteHandler>> = {
   },
   '/friends': {
     GET: (req) => handleFriendsList(req),
+  },
+  '/friends/policy': {
+    POST: (req) => handleFriendPolicy(req),
   },
   '/agents/set-access': {
     POST: (req) => handleSetAccess(req),
