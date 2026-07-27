@@ -51,6 +51,18 @@ class Message:
     signature: str | None = None
     correlation_id: str | None = None
     timestamp: str | None = None
+    #: RFC 005 — "quarantined" means first contact from an unknown sender and
+    #: the registry withheld the payload until this agent accepts them.
+    delivery_status: str | None = None
+    #: RFC 005 — registry-attested provenance of the other party. Trust this,
+    #: never identity claims made inside the payload.
+    sender_info: CounterpartInfo | None = None
+    recipient_info: CounterpartInfo | None = None
+
+    @property
+    def is_quarantined(self) -> bool:
+        """True when the payload is withheld pending a human decision."""
+        return self.delivery_status == "quarantined"
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> Message:
@@ -63,6 +75,41 @@ class Message:
             signature=data.get("signature"),
             correlation_id=data.get("correlation_id"),
             timestamp=data.get("timestamp"),
+            delivery_status=data.get("delivery_status"),
+            sender_info=CounterpartInfo.from_dict(data.get("sender_info")),
+            recipient_info=CounterpartInfo.from_dict(data.get("recipient_info")),
+        )
+
+
+@dataclass
+class CounterpartInfo:
+    """
+    RFC 005 — who is on the other end, as attested by the registry.
+
+    Use this to decide how much to trust a message; anything the payload
+    says about its own identity or authority is unverified.
+    """
+
+    agent_id: str
+    name: str | None = None
+    handle: str | None = None
+    owner_handle: str | None = None
+    #: Owner handle proved by a DNS TXT record (RFC 002 §4).
+    domain_verified: bool = False
+    #: friend | accepted_contact | stranger | blocked
+    relationship: str = "stranger"
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any] | None) -> CounterpartInfo | None:
+        if not data:
+            return None
+        return cls(
+            agent_id=data.get("agent_id", ""),
+            name=data.get("name"),
+            handle=data.get("handle"),
+            owner_handle=data.get("owner_handle"),
+            domain_verified=bool(data.get("domain_verified")),
+            relationship=data.get("relationship", "stranger"),
         )
 
 

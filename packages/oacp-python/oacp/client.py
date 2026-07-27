@@ -50,12 +50,18 @@ class OACPClient:
         owner_handle: str | None = None,
         description: str | None = None,
         metadata: dict[str, Any] | None = None,
+        action_specs: list[dict[str, Any]] | None = None,
     ):
         self.name = name
         self.capabilities = capabilities
         self.owner_handle = owner_handle
         self.description = description
         self.metadata = metadata or {}
+        # RFC 005: declaring actions with an input_schema is what lets the
+        # registry reject malformed or unknown stranger task_requests before
+        # they ever reach this agent. Without it, strangers still quarantine
+        # but nothing validates their payload shape.
+        self.action_specs = action_specs or []
 
         self._registry_url = registry_url or OACP_PUBLIC_REGISTRY_URL
         self._registry_key = registry_key or OACP_PUBLIC_REGISTRY_KEY
@@ -107,8 +113,19 @@ class OACPClient:
             body["owner_handle"] = self.owner_handle
         if self.description:
             body["description"] = self.description
-        if self.metadata:
-            body["metadata"] = self.metadata
+        metadata = dict(self.metadata)
+        if self.action_specs:
+            metadata["action_specs"] = [
+                {
+                    "name": s["name"],
+                    "description": s.get("description", ""),
+                    "price": s.get("price", 0),
+                    **({"input_schema": s["input_schema"]} if s.get("input_schema") else {}),
+                }
+                for s in self.action_specs
+            ]
+        if metadata:
+            body["metadata"] = metadata
 
         resp = self._http.post(f"{self._base_url}/register", json=body)
         resp.raise_for_status()
@@ -129,8 +146,19 @@ class OACPClient:
             body["owner_handle"] = self.owner_handle
         if self.description:
             body["description"] = self.description
-        if self.metadata:
-            body["metadata"] = self.metadata
+        metadata = dict(self.metadata)
+        if self.action_specs:
+            metadata["action_specs"] = [
+                {
+                    "name": s["name"],
+                    "description": s.get("description", ""),
+                    "price": s.get("price", 0),
+                    **({"input_schema": s["input_schema"]} if s.get("input_schema") else {}),
+                }
+                for s in self.action_specs
+            ]
+        if metadata:
+            body["metadata"] = metadata
 
         resp = await self._async_http.post(f"{self._base_url}/register", json=body)
         resp.raise_for_status()
@@ -413,6 +441,93 @@ class OACPClient:
         raise TimeoutError(f"No response within {timeout}s for task {msg_id}")
 
     # ── Balance ──
+
+    # ── RFC 005: inbound trust boundary ──
+
+    def accept_sender(self, sender_agent_id: str) -> dict[str, Any]:
+        """
+        Accept a non-friend sender (RFC 005 §3).
+
+        Releases every message the registry is holding from them and lets
+        future messages deliver immediately. This is a human-consent decision:
+        an unattended agent should not call it automatically.
+        """
+        resp = self._http.post(
+            f"{self._base_url}/contacts/set",
+            json={
+                "agent_id": self.agent_id,
+                "sender_agent_id": sender_agent_id,
+                "status": "accepted",
+            },
+            headers=self._auth_headers(),
+        )
+        resp.raise_for_status()
+        return resp.json()
+
+    def block_sender(self, sender_agent_id: str) -> dict[str, Any]:
+        """Block a sender — their future messages bounce with sender_blocked."""
+        resp = self._http.post(
+            f"{self._base_url}/contacts/set",
+            json={
+                "agent_id": self.agent_id,
+                "sender_agent_id": sender_agent_id,
+                "status": "blocked",
+            },
+            headers=self._auth_headers(),
+        )
+        resp.raise_for_status()
+        return resp.json()
+
+    def list_sender_decisions(self) -> list[dict[str, Any]]:
+        """Standing accept/block decisions this agent has made."""
+        resp = self._http.get(
+            f"{self._base_url}/contacts",
+            params={"agent_id": self.agent_id},
+            headers=self._auth_headers(),
+        )
+        resp.raise_for_status()
+        return resp.json().get("contacts", [])
+
+    def flag_message(
+        self,
+        message_id: str,
+        reason: str = "prompt_injection",
+        *,
+        note: str | None = None,
+        block: bool = False,
+    ) -> dict[str, Any]:
+        """
+        Report a hostile inbound message (RFC 005 §4).
+
+        reason: prompt_injection | spam | abuse | other. Flags from distinct
+        recipients throttle (>=2 in 7 days) and then suspend (>=5) the
+        sender's ability to message non-friends. Only the recipient of a
+        message may flag it.
+        """
+        body: dict[str, Any] = {
+            "agent_id": self.agent_id,
+            "message_id": message_id,
+            "reason": reason,
+            "block": block,
+        }
+        if note:
+            body["note"] = note
+        resp = self._http.post(
+            f"{self._base_url}/messages/flag",
+            json=body,
+            headers=self._auth_headers(),
+        )
+        resp.raise_for_status()
+        return resp.json()
+
+    def pending_first_contacts(self) -> list[Message]:
+        """
+        Inbox messages held from unknown senders, awaiting a decision.
+
+        Payloads are withheld by the registry, so these carry the sender's
+        provenance and the requested action — not the content.
+        """
+        return [m for m in self.get_messages(direction="inbox", limit=100) if m.is_quarantined]
 
     def get_balance(self) -> int:
         """Get this agent's token balance."""

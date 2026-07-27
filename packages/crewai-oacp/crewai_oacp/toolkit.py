@@ -7,7 +7,14 @@ from typing import Any
 from crewai.tools import BaseTool
 
 from oacp import OACPClient
-from crewai_oacp.tools import OACPDiscoverTool, OACPSendTaskTool, OACPCheckBalanceTool
+from crewai_oacp.tools import (
+    OACPDiscoverTool,
+    OACPSendTaskTool,
+    OACPCheckBalanceTool,
+    OACPCheckInboxTool,
+    OACPContactTool,
+    OACPFlagMessageTool,
+)
 
 
 def oacp_tools(
@@ -19,6 +26,7 @@ def oacp_tools(
     registry_url: str | None = None,
     registry_key: str | None = None,
     metadata: dict[str, Any] | None = None,
+    action_specs: list[dict[str, Any]] | None = None,
     task_timeout: float = 30.0,
 ) -> list[BaseTool]:
     """Create OACP tools for a CrewAI agent.
@@ -44,11 +52,15 @@ def oacp_tools(
         registry_url=registry_url,
         registry_key=registry_key,
         metadata=metadata,
+        action_specs=action_specs,
     )
     client.register()
 
     return [
         OACPDiscoverTool(oacp_client=client),
         OACPSendTaskTool(oacp_client=client, task_timeout=task_timeout),
+        OACPCheckInboxTool(oacp_client=client),
+        OACPContactTool(oacp_client=client),
+        OACPFlagMessageTool(oacp_client=client),
         OACPCheckBalanceTool(oacp_client=client),
     ]

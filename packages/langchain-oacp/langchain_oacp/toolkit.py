@@ -7,7 +7,14 @@ from typing import Any
 from langchain_core.tools import BaseTool
 
 from oacp import OACPClient
-from langchain_oacp.tools import OACPDiscoverTool, OACPSendTaskTool, OACPCheckBalanceTool
+from langchain_oacp.tools import (
+    OACPDiscoverTool,
+    OACPSendTaskTool,
+    OACPCheckBalanceTool,
+    OACPCheckInboxTool,
+    OACPContactTool,
+    OACPFlagMessageTool,
+)
 
 
 class OACPToolkit:
@@ -34,6 +41,7 @@ class OACPToolkit:
         registry_url: str | None = None,
         registry_key: str | None = None,
         metadata: dict[str, Any] | None = None,
+        action_specs: list[dict[str, Any]] | None = None,
         task_timeout: float = 30.0,
         auto_register: bool = True,
     ):
@@ -45,6 +53,7 @@ class OACPToolkit:
             registry_url=registry_url,
             registry_key=registry_key,
             metadata=metadata,
+            action_specs=action_specs,
         )
         self._task_timeout = task_timeout
         self._registered = False
@@ -62,6 +71,9 @@ class OACPToolkit:
         return [
             OACPDiscoverTool(oacp_client=self.client),
             OACPSendTaskTool(oacp_client=self.client, task_timeout=self._task_timeout),
+            OACPCheckInboxTool(oacp_client=self.client),
+            OACPContactTool(oacp_client=self.client),
+            OACPFlagMessageTool(oacp_client=self.client),
             OACPCheckBalanceTool(oacp_client=self.client),
         ]
 
