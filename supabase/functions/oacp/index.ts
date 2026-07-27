@@ -225,6 +225,200 @@ async function pushNotify(
   }
 }
 
+// ============================================================
+// RFC 006 Phase 2: notifications — reaching the human
+// ============================================================
+
+const DASHBOARD_URL = 'https://dashboard.liteneen.net';
+const NOTIFY_FROM = 'Liteneen <signin@liteneen.net>';
+
+/** Cryptographically random URL-safe token. */
+function randomToken(bytes = 32): string {
+  const buf = new Uint8Array(bytes);
+  crypto.getRandomValues(buf);
+  return Array.from(buf).map((b) => b.toString(16).padStart(2, '0')).join('');
+}
+
+/**
+ * Deliver one notification to every verified, enabled channel an owner has.
+ * Best-effort and deduplicated: a repeat event with the same dedupe_key is
+ * skipped, so a chatty sender can't turn into an inbox flood.
+ *
+ * Transport-agnostic on purpose — adding Telegram or web push means adding a
+ * case here, not touching any caller.
+ */
+async function notifyOwner(
+  ownerId: string,
+  event: string,
+  content: { subject: string; text: string; html?: string },
+  dedupeKey?: string,
+): Promise<void> {
+  try {
+    const supabase = getSupabaseAdmin();
+
+    if (dedupeKey) {
+      const { data: prior } = await supabase
+        .from('notification_log')
+        .select('notification_id')
+        .eq('owner_id', ownerId)
+        .eq('event', event)
+        .eq('dedupe_key', dedupeKey)
+        .eq('status', 'sent')
+        .limit(1);
+      if (prior && prior.length > 0) return;
+    }
+
+    const { data: channels } = await supabase
+      .from('notification_channels')
+      .select('channel_id, kind, address, events')
+      .eq('owner_id', ownerId)
+      .eq('enabled', true)
+      .not('verified_at', 'is', null);
+
+    for (const ch of channels ?? []) {
+      const wants = (ch.events as string[]) ?? ['*'];
+      if (!wants.includes('*') && !wants.includes(event)) continue;
+
+      let status = 'skipped';
+      let detail: string | null = null;
+      try {
+        if (ch.kind === 'email') {
+          const result = await sendEmail(ch.address as string, content);
+          status = result.ok ? 'sent' : 'failed';
+          detail = result.detail;
+        } else if (ch.kind === 'telegram') {
+          const result = await sendTelegram(ch.address as string, content);
+          status = result.ok ? 'sent' : 'failed';
+          detail = result.detail;
+        } else {
+          detail = `No transport implemented for kind '${ch.kind}'`;
+        }
+      } catch (err) {
+        status = 'failed';
+        detail = err instanceof Error ? err.message : String(err);
+      }
+
+      await supabase.from('notification_log').insert({
+        owner_id: ownerId,
+        channel_id: ch.channel_id,
+        event,
+        dedupe_key: dedupeKey ?? null,
+        status,
+        detail,
+      });
+    }
+  } catch (err) {
+    // Notification failure must never fail the operation that triggered it.
+    console.warn('[OACP] notifyOwner error:', err instanceof Error ? err.message : err);
+  }
+}
+
+async function sendEmail(
+  to: string,
+  content: { subject: string; text: string; html?: string },
+): Promise<{ ok: boolean; detail: string | null }> {
+  const key = Deno.env.get('RESEND_API_KEY');
+  if (!key) return { ok: false, detail: 'RESEND_API_KEY not configured' };
+  const res = await fetch('https://api.resend.com/emails', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${key}` },
+    body: JSON.stringify({
+      from: NOTIFY_FROM,
+      to: [to],
+      subject: content.subject,
+      text: content.text,
+      ...(content.html ? { html: content.html } : {}),
+    }),
+  });
+  if (!res.ok) {
+    return { ok: false, detail: `Resend ${res.status}: ${(await res.text()).slice(0, 200)}` };
+  }
+  return { ok: true, detail: null };
+}
+
+async function sendTelegram(
+  chatId: string,
+  content: { subject: string; text: string },
+): Promise<{ ok: boolean; detail: string | null }> {
+  const token = Deno.env.get('TELEGRAM_BOT_TOKEN');
+  if (!token) return { ok: false, detail: 'TELEGRAM_BOT_TOKEN not configured' };
+  const res = await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      chat_id: chatId,
+      text: `*${content.subject}*\n\n${content.text}`,
+      parse_mode: 'Markdown',
+      disable_web_page_preview: true,
+    }),
+  });
+  if (!res.ok) {
+    return { ok: false, detail: `Telegram ${res.status}: ${(await res.text()).slice(0, 200)}` };
+  }
+  return { ok: true, detail: null };
+}
+
+/**
+ * Tell an owner that a stranger's first contact is being held for them.
+ * Carries a single-use approval token so the decision can be made from the
+ * notification instead of hunting for the message in the dashboard.
+ */
+async function notifyQuarantine(
+  recipient: { agent_id: string; name: string; owner_id: string | null },
+  sender: { agent_id: string; name: string },
+  messageId: string,
+): Promise<void> {
+  if (!recipient.owner_id) return;
+  const supabase = getSupabaseAdmin();
+
+  const token = randomToken();
+  const expires = new Date(Date.now() + 7 * 24 * 3600 * 1000).toISOString();
+  const { error } = await supabase.from('approval_tokens').insert({
+    token,
+    owner_id: recipient.owner_id,
+    kind: 'contact_decision',
+    agent_id: recipient.agent_id,
+    subject_id: sender.agent_id,
+    expires_at: expires,
+  });
+  if (error) {
+    console.warn('[OACP] approval token insert failed:', error.message);
+    return;
+  }
+
+  const link = `${DASHBOARD_URL}/?approve=${token}`;
+  const subject = `${sender.name} wants to reach ${recipient.name}`;
+  const text =
+    `An agent you don't know — ${sender.name} — sent a first message to your agent ${recipient.name}.\n\n` +
+    `Liteneen is holding it: the contents have NOT been shown to your agent, and won't be until you decide.\n\n` +
+    `Review and decide:\n${link}\n\n` +
+    `Accepting releases every message held from this sender and lets future ones through. ` +
+    `Blocking makes their messages bounce.\n\n` +
+    `This link expires in 7 days. If you ignore it, the message simply stays held.`;
+  const html =
+    `<div style="font-family:-apple-system,Segoe UI,Roboto,sans-serif;max-width:520px;line-height:1.5">` +
+    `<h2 style="font-size:18px;margin:0 0 12px">${escapeHtmlText(sender.name)} wants to reach ${escapeHtmlText(recipient.name)}</h2>` +
+    `<p style="color:#444">An agent you don't know sent a first message to your agent. Liteneen is holding it — the contents have <strong>not</strong> been shown to your agent, and won't be until you decide.</p>` +
+    `<p><a href="${link}" style="display:inline-block;background:#6366f1;color:#fff;padding:10px 18px;border-radius:8px;text-decoration:none;font-weight:600">Review and decide</a></p>` +
+    `<p style="color:#666;font-size:13px">Accepting releases every message held from this sender and lets future ones through. Blocking makes their messages bounce. This link expires in 7 days; ignoring it leaves the message held.</p>` +
+    `</div>`;
+
+  await notifyOwner(
+    recipient.owner_id,
+    'quarantine_pending',
+    { subject, text, html },
+    // One nag per (recipient, sender) pair — not per message.
+    `contact:${recipient.agent_id}:${sender.agent_id}`,
+  );
+  console.log(`[OACP] Quarantine notification queued for owner ${recipient.owner_id} (msg ${messageId})`);
+}
+
+function escapeHtmlText(s: string): string {
+  return s.replace(/[&<>"']/g, (ch) => (
+    { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[ch] as string
+  ));
+}
+
 /**
  * Extract bearer token from Authorization header.
  */
@@ -1388,7 +1582,7 @@ async function handleMessageSend(req: Request): Promise<Response> {
   // Verify recipient exists
   const { data: recipient, error: recipientError } = await supabase
     .from('agents')
-    .select('agent_id, name, access_policy, metadata, registry_token')
+    .select('agent_id, name, access_policy, metadata, registry_token, owner_id')
     .eq('agent_id', body.recipient_agent_id)
     .single();
 
@@ -1683,6 +1877,20 @@ async function handleMessageSend(req: Request): Promise<Response> {
     `[OACP] Message ${message.message_id} sent: ${sender.name} → ${recipient.name} (${body.message_type})`,
   );
 
+  // RFC 006 Phase 2: a held message needs a HUMAN, not the agent — tell them.
+  // Fire-and-forget so notification latency never delays the send response.
+  if (deliveryStatus === 'quarantined') {
+    void notifyQuarantine(
+      {
+        agent_id: recipient.agent_id,
+        name: recipient.name,
+        owner_id: (recipient.owner_id as string | null) ?? null,
+      },
+      { agent_id: senderAgentId, name: sender.name },
+      message.message_id,
+    );
+  }
+
   // RFC 006: wake the recipient over its private broadcast channel. Envelope
   // metadata only — never the payload; the recipient fetches content through
   // the authenticated REST inbox, which applies quarantine redaction.
@@ -1822,14 +2030,21 @@ async function handleGetMessages(req: Request): Promise<Response> {
   const contactStatusBySender: Record<string, string> = {};
 
   if (counterpartIds.length > 0) {
+    // RFC 002: agents.handle is only the agent segment — the verified,
+    // fully-qualified handle needs the owner's claimed handle joined in.
+    // Provenance is the whole point here, so it must be the real one.
     const { data: infoRows } = await supabase
       .from('agents')
-      .select('agent_id, name, handle, owner_handle')
+      .select('agent_id, name, handle, owner_handle, owners:owner_id(handle)')
       .in('agent_id', counterpartIds);
     for (const r of infoRows || []) {
+      const ownerJoin = r.owners as unknown as { handle?: string } | null;
+      const fullHandle = ownerJoin?.handle && r.handle
+        ? `@${ownerJoin.handle}/${r.handle}`
+        : null;
       agentInfo[r.agent_id as string] = {
         name: (r.name as string) ?? null,
-        handle: (r.handle as string) ?? null,
+        handle: fullHandle,
         owner_handle: (r.owner_handle as string) ?? null,
       };
     }
@@ -2160,6 +2375,290 @@ async function handleMessageFlag(req: Request): Promise<Response> {
     ...flagResult,
     ...(body.block === true ? { sender_blocked: blocked } : {}),
   });
+}
+
+/**
+ * GET /approvals/pending?token= — describe the decision a token authorizes.
+ *
+ * READ ONLY, deliberately. Mail clients and link scanners prefetch URLs; if
+ * following the link performed the accept, a spam filter could befriend an
+ * attacker on the owner's behalf. Consuming the token requires POST below.
+ */
+async function handleApprovalDescribe(req: Request): Promise<Response> {
+  const url = new URL(req.url);
+  const token = url.searchParams.get('token');
+  if (!token) return errorResponse('token query parameter is required', 400);
+
+  const supabase = getSupabaseAdmin();
+  const { data: row } = await supabase
+    .from('approval_tokens')
+    .select('token, kind, agent_id, subject_id, expires_at, consumed_at, consumed_as')
+    .eq('token', token)
+    .maybeSingle();
+
+  if (!row) return errorResponse('Unknown or revoked approval link', 404, { error_code: 'token_not_found' });
+  if (row.consumed_at) {
+    return jsonResponse({
+      state: 'already_decided',
+      decided_as: row.consumed_as,
+      decided_at: row.consumed_at,
+    });
+  }
+  if (new Date(row.expires_at as string).getTime() < Date.now()) {
+    return jsonResponse({ state: 'expired', expires_at: row.expires_at });
+  }
+
+  const { data: pair } = await supabase
+    .from('agents')
+    .select('agent_id, name, handle, owner_handle, description, capabilities, owners:owner_id(handle)')
+    .in('agent_id', [row.agent_id, row.subject_id]);
+  const fullHandleOf = (a: Record<string, unknown> | undefined): string | null => {
+    if (!a) return null;
+    const ownerJoin = a.owners as { handle?: string } | null;
+    return ownerJoin?.handle && a.handle ? `@${ownerJoin.handle}/${a.handle}` : null;
+  };
+  const mine = (pair ?? []).find((a) => a.agent_id === row.agent_id);
+  const theirs = (pair ?? []).find((a) => a.agent_id === row.subject_id);
+
+  const { count } = await supabase
+    .from('messages')
+    .select('message_id', { count: 'exact', head: true })
+    .eq('recipient_agent_id', row.agent_id)
+    .eq('sender_agent_id', row.subject_id)
+    .eq('delivery_status', 'quarantined');
+
+  return jsonResponse({
+    state: 'pending',
+    kind: row.kind,
+    your_agent: mine
+      ? { agent_id: mine.agent_id, name: mine.name, handle: fullHandleOf(mine) }
+      : null,
+    sender: theirs
+      ? {
+        agent_id: theirs.agent_id,
+        name: theirs.name,
+        handle: fullHandleOf(theirs),
+        owner_handle: theirs.owner_handle,
+        description: theirs.description,
+        capabilities: theirs.capabilities,
+        domain_verified: isDomainVerifiedHandle(fullHandleOf(theirs)),
+      }
+      : null,
+    held_messages: count ?? 0,
+    expires_at: row.expires_at,
+  });
+}
+
+/**
+ * POST /approvals/decide — consume an approval token and apply the decision.
+ * Body: { token, decision: 'accepted' | 'blocked' }
+ * Single-use: the token is marked consumed in the same step.
+ */
+async function handleApprovalDecide(req: Request): Promise<Response> {
+  let body: Record<string, unknown>;
+  try {
+    body = await req.json();
+  } catch {
+    return errorResponse('Invalid JSON body', 400);
+  }
+
+  const requiredErrors = validateRequired(body, ['token', 'decision']);
+  if (requiredErrors.length > 0) return validationErrorResponse(requiredErrors);
+  if (body.decision !== 'accepted' && body.decision !== 'blocked') {
+    return errorResponse("decision must be 'accepted' or 'blocked'", 400);
+  }
+
+  const supabase = getSupabaseAdmin();
+  const { data: row } = await supabase
+    .from('approval_tokens')
+    .select('token, agent_id, subject_id, expires_at, consumed_at, consumed_as')
+    .eq('token', body.token as string)
+    .maybeSingle();
+
+  if (!row) return errorResponse('Unknown or revoked approval link', 404, { error_code: 'token_not_found' });
+  if (row.consumed_at) {
+    return errorResponse(
+      `This link was already used (${row.consumed_as}). Open the dashboard to change the decision.`,
+      409,
+      { error_code: 'token_consumed', decided_as: row.consumed_as },
+    );
+  }
+  if (new Date(row.expires_at as string).getTime() < Date.now()) {
+    return errorResponse('This approval link has expired. Decide from the dashboard instead.', 410, {
+      error_code: 'token_expired',
+    });
+  }
+
+  // Consume first, conditionally on it still being unconsumed — two clicks
+  // racing must not both apply.
+  const { data: claimed, error: claimError } = await supabase
+    .from('approval_tokens')
+    .update({ consumed_at: new Date().toISOString(), consumed_as: body.decision as string })
+    .eq('token', row.token as string)
+    .is('consumed_at', null)
+    .select('token');
+  if (claimError || !claimed || claimed.length === 0) {
+    return errorResponse('This link was just used from somewhere else.', 409, {
+      error_code: 'token_consumed',
+    });
+  }
+
+  const { error: upsertError } = await supabase.from('contacts').upsert({
+    recipient_agent_id: row.agent_id as string,
+    sender_agent_id: row.subject_id as string,
+    status: body.decision as string,
+    decided_via: 'manual',
+    updated_at: new Date().toISOString(),
+  }, { onConflict: 'recipient_agent_id,sender_agent_id' });
+  if (upsertError) {
+    console.error('[OACP] Approval upsert error:', upsertError);
+    return errorResponse('Failed to save the decision', 500);
+  }
+
+  let released = 0;
+  if (body.decision === 'accepted') {
+    const { data: rows } = await supabase
+      .from('messages')
+      .update({ delivery_status: 'delivered' })
+      .eq('recipient_agent_id', row.agent_id as string)
+      .eq('sender_agent_id', row.subject_id as string)
+      .eq('delivery_status', 'quarantined')
+      .select('message_id');
+    released = rows?.length ?? 0;
+  }
+
+  return jsonResponse({
+    decision: body.decision,
+    released_messages: released,
+  });
+}
+
+/**
+ * GET/POST /notifications/channels — an owner's notification destinations.
+ * Owner-authenticated via Supabase session JWT.
+ */
+async function handleNotificationChannels(req: Request): Promise<Response> {
+  const token = extractBearerToken(req);
+  if (!token) return errorResponse('Authorization header with Bearer token required', 401);
+
+  const supabase = getSupabaseAdmin();
+  const { data: userData } = await supabase.auth.getUser(token);
+  const ownerId = userData?.user?.id;
+  if (!ownerId) return errorResponse('A signed-in owner session is required', 403);
+
+  if (req.method === 'GET') {
+    const { data } = await supabase
+      .from('notification_channels')
+      .select('channel_id, kind, address, verified_at, enabled, events, created_at')
+      .eq('owner_id', ownerId)
+      .order('created_at');
+    return jsonResponse({ channels: data ?? [] });
+  }
+
+  let body: Record<string, unknown>;
+  try {
+    body = await req.json();
+  } catch {
+    return errorResponse('Invalid JSON body', 400);
+  }
+
+  // Remove a channel
+  if (body.remove_channel_id) {
+    const { error } = await supabase
+      .from('notification_channels')
+      .delete()
+      .eq('channel_id', body.remove_channel_id as string)
+      .eq('owner_id', ownerId);
+    if (error) return errorResponse('Failed to remove channel', 500);
+    return jsonResponse({ removed: true });
+  }
+
+  // Toggle a channel
+  if (body.channel_id && body.enabled !== undefined) {
+    const { error } = await supabase
+      .from('notification_channels')
+      .update({ enabled: body.enabled === true, updated_at: new Date().toISOString() })
+      .eq('channel_id', body.channel_id as string)
+      .eq('owner_id', ownerId);
+    if (error) return errorResponse('Failed to update channel', 500);
+    return jsonResponse({ updated: true });
+  }
+
+  // Add a channel
+  const kind = body.kind as string | undefined;
+  const address = body.address as string | undefined;
+  if (!kind || !address) {
+    return errorResponse('kind and address are required', 400);
+  }
+  if (!['email', 'telegram'].includes(kind)) {
+    return errorResponse("kind must be 'email' or 'telegram' (others not yet dispatchable)", 400);
+  }
+  if (kind === 'email' && !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(address)) {
+    return errorResponse('address must be a valid email', 400);
+  }
+
+  // A newly added address is unverified until it proves receipt. The owner's
+  // own sign-in email is the exception — Supabase Auth already proved it.
+  const { data: owner } = await supabase
+    .from('owners')
+    .select('email')
+    .eq('owner_id', ownerId)
+    .maybeSingle();
+  const preVerified = kind === 'email' && owner?.email &&
+    (owner.email as string).toLowerCase() === address.toLowerCase();
+
+  const verifyToken = preVerified ? null : randomToken(16);
+  const { data: inserted, error } = await supabase
+    .from('notification_channels')
+    .upsert({
+      owner_id: ownerId,
+      kind,
+      address,
+      verified_at: preVerified ? new Date().toISOString() : null,
+      verify_token: verifyToken,
+      updated_at: new Date().toISOString(),
+    }, { onConflict: 'owner_id,kind,address' })
+    .select('channel_id, kind, address, verified_at')
+    .single();
+  if (error) {
+    console.error('[OACP] Channel upsert error:', error);
+    return errorResponse('Failed to add channel', 500);
+  }
+
+  if (!preVerified && kind === 'email') {
+    const link = `${DASHBOARD_URL}/?verify_channel=${verifyToken}`;
+    await sendEmail(address, {
+      subject: 'Confirm this address for Liteneen alerts',
+      text:
+        `Confirm this address so Liteneen can reach you when one of your agents needs a decision.\n\n${link}\n\n` +
+        `If you didn't request this, ignore it — nothing will be sent here.`,
+    });
+  }
+
+  return jsonResponse({ channel: inserted, verification_sent: !preVerified }, 201);
+}
+
+/** POST /notifications/verify — confirm a channel with its emailed token. */
+async function handleNotificationVerify(req: Request): Promise<Response> {
+  let body: Record<string, unknown>;
+  try {
+    body = await req.json();
+  } catch {
+    return errorResponse('Invalid JSON body', 400);
+  }
+  if (!body.verify_token) return errorResponse('verify_token is required', 400);
+
+  const supabase = getSupabaseAdmin();
+  const { data, error } = await supabase
+    .from('notification_channels')
+    .update({ verified_at: new Date().toISOString(), verify_token: null, updated_at: new Date().toISOString() })
+    .eq('verify_token', body.verify_token as string)
+    .select('channel_id, kind, address');
+  if (error) return errorResponse('Verification failed', 500);
+  if (!data || data.length === 0) {
+    return errorResponse('That confirmation link is no longer valid', 404);
+  }
+  return jsonResponse({ verified: true, channel: data[0] });
 }
 
 // ============================================================
@@ -3144,6 +3643,19 @@ const routes: Record<string, Record<string, RouteHandler>> = {
   },
   '/contacts': {
     GET: (req) => handleContactsList(req),
+  },
+  '/approvals/pending': {
+    GET: (req) => handleApprovalDescribe(req),
+  },
+  '/approvals/decide': {
+    POST: (req) => handleApprovalDecide(req),
+  },
+  '/notifications/channels': {
+    GET: (req) => handleNotificationChannels(req),
+    POST: (req) => handleNotificationChannels(req),
+  },
+  '/notifications/verify': {
+    POST: (req) => handleNotificationVerify(req),
   },
   '/balance': {
     GET: (req) => handleGetBalance(req),

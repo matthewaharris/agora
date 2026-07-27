@@ -998,6 +998,17 @@
     </div>
   </header>
 
+  <!-- ═══ Approval modal (RFC 006 notification links) ═══ -->
+  <div id="approvalModal" class="modal-overlay" onclick="if(event.target===this)closeApprovalModal()" style="display:none">
+    <div class="modal" style="max-width:460px">
+      <div class="modal-header">
+        <h2>Decision needed</h2>
+        <button class="modal-close" onclick="closeApprovalModal()">×</button>
+      </div>
+      <div class="modal-body" id="approvalBody"></div>
+    </div>
+  </div>
+
   <!-- ═══ Owner account modal (RFC 003) ═══ -->
   <div id="authModal" class="modal-overlay" onclick="if(event.target===this)closeAuthModal()" style="display:none">
     <div class="modal" style="max-width:420px">
@@ -1716,6 +1727,110 @@
             </div>
           </div>`;
       }).join('');
+    }
+
+    // ============================================================
+    // RFC 006 — decide from a notification link
+    // ============================================================
+
+    /**
+     * Render the decision an ?approve= token authorizes. Fetching the
+     * description is read-only by design: mail clients and link scanners
+     * prefetch URLs, so following the link must never apply the decision.
+     */
+    async function openApprovalLink(token) {
+      const cfg = getConfig();
+      const modal = document.getElementById('approvalModal');
+      const bodyEl = document.getElementById('approvalBody');
+      modal.style.display = 'flex';
+      bodyEl.innerHTML = '<p style="color:var(--text-dim)">Loading…</p>';
+      history.replaceState(null, '', location.pathname);
+
+      try {
+        const res = await fetch(
+          `${cfg.url}/functions/v1/oacp/approvals/pending?token=${encodeURIComponent(token)}`,
+        );
+        const info = await res.json();
+        if (!res.ok) throw new Error(info.error || `HTTP ${res.status}`);
+
+        if (info.state === 'already_decided') {
+          bodyEl.innerHTML = `<p>This request was already <strong>${esc(info.decided_as)}</strong>.</p>
+            <p style="color:var(--text-faint);font-size:12px">You can change it any time from the Approvals tab.</p>`;
+          return;
+        }
+        if (info.state === 'expired') {
+          bodyEl.innerHTML = `<p>This link has expired.</p>
+            <p style="color:var(--text-faint);font-size:12px">The message is still held — decide from the Approvals tab.</p>`;
+          return;
+        }
+
+        const s = info.sender || {};
+        const verified = s.domain_verified
+          ? '<span class="tier-chip" title="Owner handle proved by DNS TXT record">✓ DNS-verified org</span>'
+          : '<span style="color:var(--text-faint);font-size:11px">unverified identity</span>';
+        bodyEl.innerHTML = `
+          <p style="margin-bottom:14px">
+            <strong>${esc(s.name || 'An unknown agent')}</strong>
+            ${s.handle ? `<span class="handle">${esc(s.handle)}</span>` : ''} ${verified}
+            wants to reach your agent <strong>${esc(info.your_agent?.name || '')}</strong>.
+          </p>
+          ${s.description ? `<p style="color:var(--text-dim);font-size:13px">${esc(s.description)}</p>` : ''}
+          <p style="color:var(--text-dim);font-size:13px">
+            ${info.held_messages} message${info.held_messages === 1 ? '' : 's'} held — contents have not been shown to your agent.
+          </p>
+          <div class="approval-actions" id="approvalModalActions" style="margin-top:16px">
+            <button class="btn-accept" onclick="decideViaToken('${esc(token)}','accepted')">Accept sender</button>
+            <button class="btn-block" onclick="decideViaToken('${esc(token)}','blocked')">Block</button>
+          </div>`;
+      } catch (err) {
+        bodyEl.innerHTML = `<p style="color:#f87171">${esc(err.message)}</p>`;
+      }
+    }
+
+    async function decideViaToken(token, decision) {
+      const cfg = getConfig();
+      const actions = document.getElementById('approvalModalActions');
+      actions.querySelectorAll('button').forEach((b) => { b.disabled = true; });
+      try {
+        const res = await fetch(`${cfg.url}/functions/v1/oacp/approvals/decide`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ token, decision }),
+        });
+        const body = await res.json();
+        if (!res.ok) throw new Error(body.error || `HTTP ${res.status}`);
+        actions.innerHTML = decision === 'accepted'
+          ? `<span class="approval-done">✓ Accepted — ${body.released_messages} message${body.released_messages === 1 ? '' : 's'} released.</span>`
+          : '<span class="approval-done blocked">⊘ Blocked — their messages will bounce.</span>';
+        if (authSession) { await loadMessages(); refreshApprovalBadge(); }
+      } catch (err) {
+        actions.innerHTML = `<span class="approval-done blocked">${esc(err.message)}</span>`;
+      }
+    }
+
+    function closeApprovalModal() {
+      document.getElementById('approvalModal').style.display = 'none';
+    }
+
+    /** Confirm a notification address from its emailed link. */
+    async function confirmChannel(verifyToken) {
+      const cfg = getConfig();
+      history.replaceState(null, '', location.pathname);
+      try {
+        const res = await fetch(`${cfg.url}/functions/v1/oacp/notifications/verify`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ verify_token: verifyToken }),
+        });
+        const body = await res.json();
+        const modal = document.getElementById('approvalModal');
+        document.getElementById('approvalBody').innerHTML = res.ok
+          ? `<p>✓ <strong>${esc(body.channel.address)}</strong> is confirmed. Liteneen can now reach you here when an agent needs a decision.</p>`
+          : `<p style="color:#f87171">${esc(body.error || 'Confirmation failed')}</p>`;
+        modal.style.display = 'flex';
+      } catch (err) {
+        console.warn('[OACP Dashboard] channel confirmation failed', err);
+      }
     }
 
     /** Accept or block a sender via the registry, authenticated as the owner. */
@@ -2785,6 +2900,16 @@
       // ?msg=<message_id> deep-links straight to a message's detail modal
       const msgId = urlParams.get('msg');
       if (msgId) setTimeout(() => openMessageDetail(msgId), 400);
+
+      // RFC 006: ?approve=<token> from a notification opens the decision.
+      // Rendering it is READ-ONLY — the decision needs an explicit click,
+      // so a mail client prefetching the link can never accept a stranger.
+      const approveToken = urlParams.get('approve');
+      if (approveToken) openApprovalLink(approveToken);
+
+      // ?verify_channel=<token> confirms a notification address.
+      const verifyToken = urlParams.get('verify_channel');
+      if (verifyToken) confirmChannel(verifyToken);
     });
   </script>
 </body>
