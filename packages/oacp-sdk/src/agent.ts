@@ -86,6 +86,8 @@ export class OACPAgent {
   // deno-lint-ignore no-explicit-any
   private realtimeChannel: any = null;
   private realtimeActive = false;
+  /** Message ids already handed to handlers (push/poll de-duplication). */
+  private dispatchedMessageIds = new Set<string>();
   // deno-lint-ignore no-explicit-any
   private supabaseClient: any = null;
 
@@ -836,7 +838,7 @@ export class OACPAgent {
    * @private
    */
   private async startRealtimeSubscription(): Promise<void> {
-    if (!this.agentId) {
+    if (!this.agentId || !this.registryToken) {
       // Not registered yet — will be called again after register()
       return;
     }
@@ -855,27 +857,33 @@ export class OACPAgent {
         );
       }
 
-      const channelName = `oacp-messages-${this.agentId}`;
+      // RFC 006: listen on the private broadcast channel the registry
+      // derives from (agent_id, hashed registry token). Table replication
+      // is not usable here — RFC 001 closed anon reads on `messages`, so
+      // postgres_changes silently delivers nothing to an agent client.
+      const channelName = await this.notifyChannelName();
       this.realtimeChannel = this.supabaseClient
         .channel(channelName)
         .on(
-          'postgres_changes',
-          {
-            event: 'INSERT',
-            schema: 'public',
-            table: 'messages',
-            filter: `recipient_agent_id=eq.${this.agentId}`,
-          },
+          'broadcast',
+          { event: 'message' },
           // deno-lint-ignore no-explicit-any
-          (payload: any) => {
-            const msg = payload.new as MessageEnvelope;
-            this.dispatchMessage(msg);
+          (evt: any) => {
+            const envelope = (evt?.payload ?? {}) as {
+              message_id?: string;
+              delivery_status?: string;
+            };
+            if (!envelope.message_id) return;
+            // Notification carries metadata only: fetch the real message
+            // through the authenticated REST inbox (single source of truth
+            // for unsealing, quarantine redaction, and provenance).
+            void this.fetchAndDispatch(envelope.message_id);
           },
         )
         .subscribe((status: string) => {
           if (status === 'SUBSCRIBED') {
             this.realtimeActive = true;
-            console.log(`[OACP] Realtime subscription active for ${this.agentId}`);
+            console.log(`[OACP] Push channel active for ${this.agentId}`);
           } else if (status === 'CLOSED' || status === 'CHANNEL_ERROR' || status === 'TIMED_OUT') {
             this.realtimeActive = false;
           }
@@ -884,6 +892,38 @@ export class OACPAgent {
       console.warn(
         '[OACP] Supabase Realtime not available — use getMessages() for polling instead',
         err instanceof Error ? err.message : err,
+      );
+    }
+  }
+
+  /**
+   * The private push channel for this agent (RFC 006). Must match the
+   * registry's derivation: sha256("oacp-notify:<agent_id>:<sha256(token)>").
+   * Knowing an agent_id (public via /discover) is deliberately not enough.
+   */
+  private async notifyChannelName(): Promise<string> {
+    const { createHash } = await import('node:crypto');
+    const tokenHash = createHash('sha256').update(this.registryToken as string).digest('hex');
+    const channel = createHash('sha256')
+      .update(`oacp-notify:${this.agentId}:${tokenHash}`)
+      .digest('hex');
+    return `oacp-notify-${channel}`;
+  }
+
+  /**
+   * Resolve a pushed message_id to the full envelope via REST and dispatch
+   * it exactly once. De-duplicates against the polling path, so a message
+   * that arrives by both routes fires handlers a single time.
+   */
+  private async fetchAndDispatch(messageId: string): Promise<void> {
+    if (this.dispatchedMessageIds.has(messageId)) return;
+    try {
+      const res = await this.getMessages({ direction: 'inbox', limit: 20 });
+      const msg = res.messages.find((m) => m.message_id === messageId);
+      if (msg) this.dispatchMessage(msg);
+    } catch (err) {
+      console.warn(
+        `[OACP] Push fetch failed for ${messageId}: ${err instanceof Error ? err.message : err}`,
       );
     }
   }
@@ -1104,6 +1144,18 @@ export class OACPAgent {
    * @private
    */
   private dispatchMessage(msg: MessageEnvelope): void {
+    // Fire handlers at most once per message, whichever route delivered it
+    // (push channel or poll). Bounded so long-lived agents don't grow it
+    // without limit.
+    if (msg.message_id) {
+      if (this.dispatchedMessageIds.has(msg.message_id)) return;
+      this.dispatchedMessageIds.add(msg.message_id);
+      if (this.dispatchedMessageIds.size > 1000) {
+        const oldest = this.dispatchedMessageIds.values().next().value;
+        if (oldest) this.dispatchedMessageIds.delete(oldest);
+      }
+    }
+
     // RFC 005: quarantined rows are payload-withheld first contact — the
     // REST inbox presents them redacted; never hand a raw one to handlers.
     if (msg.delivery_status === 'quarantined') {

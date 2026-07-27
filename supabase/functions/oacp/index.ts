@@ -172,6 +172,60 @@ async function hashToken(token: string): Promise<string> {
 }
 
 /**
+ * RFC 006: the per-agent push notification channel.
+ *
+ * Derived from the agent's id AND its hashed registry token, so only the
+ * agent (which holds the raw token) and the registry can compute it — an
+ * agent_id alone is public via /discover and must not be enough to listen
+ * in. Broadcast carries envelope metadata only; the REST inbox stays
+ * authoritative for content.
+ */
+async function notifyChannelName(agentId: string, tokenHash: string): Promise<string> {
+  const encoder = new TextEncoder();
+  const data = encoder.encode(`oacp-notify:${agentId}:${tokenHash}`);
+  const hashBuffer = await crypto.subtle.digest('SHA-256', data);
+  const hex = Array.from(new Uint8Array(hashBuffer))
+    .map((b) => b.toString(16).padStart(2, '0'))
+    .join('');
+  return `oacp-notify-${hex}`;
+}
+
+/**
+ * Push a delivery notification to the recipient's channel via Realtime's
+ * HTTP broadcast API (no websocket setup cost inside the request path).
+ * Best-effort: push only shortcuts the wait, so a failure here degrades to
+ * the SDK's polling fallback rather than failing the send.
+ */
+async function pushNotify(
+  recipientAgentId: string,
+  recipientTokenHash: string,
+  envelope: Record<string, unknown>,
+): Promise<void> {
+  try {
+    const url = Deno.env.get('SUPABASE_URL');
+    const key = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY');
+    if (!url || !key) return;
+    const topic = await notifyChannelName(recipientAgentId, recipientTokenHash);
+    const res = await fetch(`${url}/realtime/v1/api/broadcast`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        apikey: key,
+        Authorization: `Bearer ${key}`,
+      },
+      body: JSON.stringify({
+        messages: [{ topic, event: 'message', payload: envelope }],
+      }),
+    });
+    if (!res.ok) {
+      console.warn(`[OACP] Push notify failed (${res.status}) for ${recipientAgentId}`);
+    }
+  } catch (err) {
+    console.warn('[OACP] Push notify error:', err instanceof Error ? err.message : err);
+  }
+}
+
+/**
  * Extract bearer token from Authorization header.
  */
 function extractBearerToken(req: Request): string | null {
@@ -1334,7 +1388,7 @@ async function handleMessageSend(req: Request): Promise<Response> {
   // Verify recipient exists
   const { data: recipient, error: recipientError } = await supabase
     .from('agents')
-    .select('agent_id, name, access_policy, metadata')
+    .select('agent_id, name, access_policy, metadata, registry_token')
     .eq('agent_id', body.recipient_agent_id)
     .single();
 
@@ -1628,6 +1682,20 @@ async function handleMessageSend(req: Request): Promise<Response> {
   console.log(
     `[OACP] Message ${message.message_id} sent: ${sender.name} → ${recipient.name} (${body.message_type})`,
   );
+
+  // RFC 006: wake the recipient over its private broadcast channel. Envelope
+  // metadata only — never the payload; the recipient fetches content through
+  // the authenticated REST inbox, which applies quarantine redaction.
+  if (recipient.registry_token) {
+    await pushNotify(recipient.agent_id, recipient.registry_token as string, {
+      message_id: message.message_id,
+      sender_agent_id: senderAgentId,
+      message_type: body.message_type,
+      correlation_id: (body.correlation_id as string) || null,
+      delivery_status: deliveryStatus,
+      created_at: message.created_at,
+    });
+  }
 
   return jsonResponse(
     {

@@ -530,7 +530,7 @@ export function buildServer(): { server: McpServer; shutdown: () => Promise<void
       title: 'Wait for an OACP message',
       description:
         'Block until a new inbox message arrives (optionally filtered by correlation_id and/or message_type), or until the timeout. ' +
-        'Delivery is push-based (Supabase Realtime) when available, so replies arrive near-instantly; a background poll covers the fallback. ' +
+        'Delivery is push-based (Realtime broadcast) when available, so replies typically arrive within about a second; a background poll covers the fallback. ' +
         'Use after oacp_send with a task_request to collect the task_result. ' +
         'Returns { timed_out: true } if nothing arrives — the reply may still come later; check again with oacp_check_inbox. ' +
         'Keep timeout_seconds under your MCP client tool timeout (default 25s).',

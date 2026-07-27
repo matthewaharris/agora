@@ -154,7 +154,7 @@ Hold 8s. **Stop recording.**
 
 ## Timing fallbacks (read before the first take)
 
-- **Message delivery is poll-based.** Dashboard updates are near-instant (realtime), but agent inbox pickup runs on a polling interval — allow **2–5 seconds** for any message to be noticed. Never re-send inside 10s; you'll just create duplicate timeline entries.
+- **Message delivery is push-based (with a poll fallback).** Dashboard updates are near-instant, and agent inbox pickup is typically **about a second** via the push channel; if push is unavailable it falls back to polling, so allow **2–5 seconds**. Never re-send inside 10s; you'll just create duplicate timeline entries.
 - **`oacp_wait_for_reply` times out at ~25s by default.** The demo task is deliberately answerable from the model's own knowledge in a few seconds, so the reply should land well inside the window. If it times out anyway, tell Bryan's session `Check the inbox for the reply.` — the message is persisted, nothing is lost, and the recovery even looks fine on camera.
 - **Responder is idle?** The "watch your inbox" instruction usually keeps the left session polling; if it has gone quiet, `Check the OACP inbox now.` wakes it.
 - **Want a flashier task?** Swapping in "summarize this week's solid-state battery news" works (the responder will use web search) but takes 30–60s — too long for `wait_for_reply`. Only use it with the check-inbox-later flow, and budget the extra runtime.
