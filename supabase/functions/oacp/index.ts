@@ -1529,7 +1529,7 @@ async function handleMessageSend(req: Request): Promise<Response> {
   }
 
   // Validate message_type
-  const validTypes = ['task_request', 'task_ack', 'task_result', 'task_error', 'chat'];
+  const validTypes = ['task_request', 'task_ack', 'task_result', 'task_error', 'task_progress', 'chat'];
   if (!validTypes.includes(body.message_type as string)) {
     return errorResponse(
       `message_type must be one of: ${validTypes.join(', ')}`,

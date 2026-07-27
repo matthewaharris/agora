@@ -126,6 +126,8 @@ export interface DiscoverResponse {
 export type MessageType =
   | 'task_request'
   | 'task_ack'
+  /** Interim progress on a long-running task (RFC 006) — same correlation_id. */
+  | 'task_progress'
   | 'task_result'
   | 'task_error'
   | 'chat';

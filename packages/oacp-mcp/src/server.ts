@@ -16,7 +16,7 @@ import * as os from 'os';
 import * as path from 'path';
 import { OACPAgent, type MessageEnvelope, type MessageType } from 'oacp-sdk';
 
-const MESSAGE_TYPES = ['task_request', 'task_ack', 'task_result', 'task_error', 'chat'] as const;
+const MESSAGE_TYPES = ['task_request', 'task_ack', 'task_progress', 'task_result', 'task_error', 'chat'] as const;
 
 interface EnvConfig {
   name?: string;
@@ -532,7 +532,8 @@ export function buildServer(): { server: McpServer; shutdown: () => Promise<void
         'Block until a new inbox message arrives (optionally filtered by correlation_id and/or message_type), or until the timeout. ' +
         'Delivery is push-based (Realtime broadcast) when available, so replies typically arrive within about a second; a background poll covers the fallback. ' +
         'Use after oacp_send with a task_request to collect the task_result. ' +
-        'Returns { timed_out: true } if nothing arrives — the reply may still come later; check again with oacp_check_inbox. ' +
+        'Returns { timed_out: true } if nothing arrives — with a presence read on the counterparty when a correlation_id was given, so you can tell your human whether they are offline (it will be delivered later; messages persist) or online and still working. ' +
+        'Long tasks may send interim task_progress messages on the same correlation_id. ' +
         'Keep timeout_seconds under your MCP client tool timeout (default 25s).',
       inputSchema: {
         correlation_id: z.string().optional().describe('Only match messages in this thread'),
@@ -584,10 +585,49 @@ export function buildServer(): { server: McpServer; shutdown: () => Promise<void
           }
         }
 
+        // RFC 006: a timeout alone can't distinguish "still thinking" from
+        // "nobody is home". Resolve the counterparty's presence so the model
+        // reports the actual reason instead of guessing.
+        let presence: Record<string, unknown> | undefined;
+        if (correlation_id) {
+          try {
+            const thread = await a.getMessages({
+              direction: 'outbox',
+              correlationId: correlation_id,
+              limit: 1,
+            });
+            const counterpartId = thread.messages[0]?.recipient_agent_id;
+            if (counterpartId) {
+              const card = await a.getAgentCard(counterpartId);
+              if (card) {
+                const lastSeen = card.last_seen_at ? new Date(card.last_seen_at).getTime() : 0;
+                const staleMinutes = lastSeen
+                  ? Math.round((Date.now() - lastSeen) / 60000)
+                  : null;
+                presence = {
+                  counterparty: card.name,
+                  status: card.status,
+                  last_seen_minutes_ago: staleMinutes,
+                };
+              }
+            }
+          } catch {
+            // Presence is a nicety — never fail the wait because of it.
+          }
+        }
+
+        const offline = presence && presence.status !== 'online';
         return jsonResult({
           timed_out: true,
           waited_seconds: timeout_seconds,
-          note: 'No message arrived. The other agent may be offline or still working — check later with oacp_check_inbox (messages persist).',
+          ...(presence ? { presence } : {}),
+          note: offline
+            ? `No reply yet, and ${presence!.counterparty} is currently ${presence!.status}` +
+              (presence!.last_seen_minutes_ago !== null
+                ? ` (last seen ~${presence!.last_seen_minutes_ago} min ago)`
+                : '') +
+              '. Messages persist, so it will be delivered when they come back — tell your human rather than retrying in a loop.'
+            : 'No message arrived yet. The other agent is online, so it is most likely still working — check again with oacp_check_inbox, or wait again on the same correlation_id.',
         });
       } catch (err) {
         return errorResult(err instanceof Error ? err.message : String(err));
