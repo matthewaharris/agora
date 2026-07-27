@@ -65,6 +65,7 @@ import type {
   MessageEnvelope,
   AgentCard,
   ApiError,
+  SenderDecision,
 } from './types.js';
 
 export class OACPAgent {
@@ -279,6 +280,9 @@ export class OACPAgent {
         name: s.name,
         description: s.description,
         price: s.price || 0,
+        // RFC 005: publish the input schema so the registry can reject
+        // malformed stranger task_requests before they reach this agent.
+        input_schema: s.inputSchema,
       }));
     }
 
@@ -1100,6 +1104,15 @@ export class OACPAgent {
    * @private
    */
   private dispatchMessage(msg: MessageEnvelope): void {
+    // RFC 005: quarantined rows are payload-withheld first contact — the
+    // REST inbox presents them redacted; never hand a raw one to handlers.
+    if (msg.delivery_status === 'quarantined') {
+      console.log(
+        `[OACP] Quarantined first-contact message from ${msg.sender_agent_id?.substring(0, 8)}... — held until the sender is accepted (acceptSender)`,
+      );
+      return;
+    }
+
     console.log(
       `[OACP] Received ${msg.message_type} from ${msg.sender_agent_id?.substring(0, 8)}...`,
     );
@@ -1398,6 +1411,77 @@ export class OACPAgent {
   isFriend(agentId: string): boolean {
     const c = getContact(this.contactsPath, agentId);
     return !!c && c.via === 'code';
+  }
+
+  // ============================================================
+  // RFC 005 — Inbound trust boundary
+  // ============================================================
+
+  /**
+   * Accept a non-friend sender (RFC 005 §3). Releases every quarantined
+   * message held from them and lets future sends deliver immediately.
+   */
+  async acceptSender(
+    senderAgentId: string,
+  ): Promise<{ sender_agent_id: string; sender_name: string; status: string; released_messages: number }> {
+    return this.apiPost('/contacts/set', {
+      sender_agent_id: senderAgentId,
+      status: 'accepted',
+    });
+  }
+
+  /**
+   * Block a non-friend sender: their sends bounce with sender_blocked and
+   * anything still quarantined stays withheld.
+   */
+  async blockSender(
+    senderAgentId: string,
+  ): Promise<{ sender_agent_id: string; sender_name: string; status: string }> {
+    return this.apiPost('/contacts/set', {
+      sender_agent_id: senderAgentId,
+      status: 'blocked',
+    });
+  }
+
+  /** List this agent's accept/block decisions about non-friend senders. */
+  async listSenderDecisions(): Promise<{ contacts: SenderDecision[] }> {
+    if (!this.agentId || !this.registryToken) {
+      throw new Error('Agent must be registered first');
+    }
+    const response = await fetch(
+      `${this.apiBaseUrl}/contacts?agent_id=${this.agentId}`,
+      { headers: { Authorization: `Bearer ${this.registryToken}` } },
+    );
+    if (!response.ok) {
+      const error = (await response.json()) as ApiError;
+      throw new Error(`List contacts failed (${response.status}): ${error.error}`);
+    }
+    return (await response.json()) as { contacts: SenderDecision[] };
+  }
+
+  /**
+   * Flag a hostile inbound message (RFC 005 §4) — prompt injection, spam,
+   * abuse. Flags from distinct recipients throttle and then suspend the
+   * sender's ability to message strangers, and lower their reputation.
+   * Pass block: true to also block the sender in the same call.
+   */
+  async flagMessage(
+    messageId: string,
+    reason: 'prompt_injection' | 'spam' | 'abuse' | 'other',
+    options: { note?: string; block?: boolean } = {},
+  ): Promise<{
+    flagged: boolean;
+    already_flagged?: boolean;
+    sender_agent_id: string;
+    sender_distinct_flaggers_7d: number;
+    sender_blocked?: boolean;
+  }> {
+    return this.apiPost('/messages/flag', {
+      message_id: messageId,
+      reason,
+      ...(options.note !== undefined ? { note: options.note } : {}),
+      ...(options.block !== undefined ? { block: options.block } : {}),
+    });
   }
 
   // ============================================================

@@ -149,6 +149,41 @@ export interface MessageEnvelope {
   sequence?: number;
   /** Set by the SDK when a sealed payload (RFC 001 §4) was decrypted locally */
   was_sealed?: boolean;
+  /**
+   * RFC 005: 'quarantined' = first contact from an unknown sender; the
+   * registry withholds the payload until the recipient accepts the contact.
+   */
+  delivery_status?: 'delivered' | 'quarantined';
+  /** RFC 005: registry-attested provenance of the counterpart (inbox). */
+  sender_info?: CounterpartInfo;
+  /** RFC 005: registry-attested provenance of the counterpart (outbox). */
+  recipient_info?: CounterpartInfo;
+}
+
+/**
+ * RFC 005: who is on the other end of a message, as attested by the
+ * registry — not by the message content. Use this (never the payload)
+ * to decide how much to trust what was sent.
+ */
+export interface CounterpartInfo {
+  agent_id: string;
+  name: string | null;
+  handle: string | null;
+  owner_handle: string | null;
+  /** True when the handle's owner segment was claimed by DNS TXT proof (RFC 002 §2). */
+  domain_verified: boolean;
+  relationship: 'friend' | 'accepted_contact' | 'stranger' | 'blocked';
+}
+
+/** RFC 005: a standing accept/block decision about a non-friend sender. */
+export interface SenderDecision {
+  sender_agent_id: string;
+  name: string | null;
+  handle: string | null;
+  owner_handle: string | null;
+  status: 'accepted' | 'blocked';
+  decided_via: string;
+  updated_at: string;
 }
 
 /**

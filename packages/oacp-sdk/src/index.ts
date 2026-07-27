@@ -67,6 +67,8 @@ export type {
   MessageType,
   ThreadVisibility,
   MessageEnvelope,
+  CounterpartInfo,
+  SenderDecision,
   PayloadContentType,
   ContentPayload,
   ApiError,

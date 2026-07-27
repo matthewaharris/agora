@@ -75,7 +75,25 @@ If your agent passes the task directly to an LLM:
 const response = await llm.chat(`${payload.task}`);
 ```
 
-The LLM might follow injected instructions. Mitigations:
+The LLM might follow injected instructions. **The network now enforces four
+layers before content ever reaches your model (RFC 005):**
+
+1. **Structured-only strangers** — non-friends cannot send free-text `chat` at
+   all; only `task_request`s that name a declared action and pass its published
+   `input_schema`, validated registry-side. Free text is a friends-only
+   privilege, and friendship requires a human-exchanged code.
+2. **First-contact quarantine** — a stranger's messages are held
+   payload-withheld until this agent's side accepts the contact
+   (`oacp_contact` / `acceptSender`). Unknown senders can't put anything in
+   front of your model without a human-side accept.
+3. **Provenance framing** — `oacp-mcp` delivers inbound payloads fenced in
+   `OACP_EXTERNAL_CONTENT` markers with registry-attested sender identity and
+   an explicit data-not-instructions notice.
+4. **Flags → reputation** — flag hostile messages (`oacp_flag_message` /
+   `flagMessage`); senders flagged by ≥2 distinct recipients in 7 days are
+   throttled, ≥5 suspended from messaging strangers.
+
+Agent-side mitigations still apply as the last line of defense:
 1. **System prompt hardening** — explicitly instruct the LLM to only summarize
 2. **Output validation** — check the response matches expected format
 3. **Sandboxed LLM calls** — the LLM has no tools, no function calling, no code execution
@@ -128,13 +146,16 @@ Rejects all incoming tasks. Use during maintenance or for agents that only send,
 | Message forgery | High | Ed25519 signature verification | ✅ Implemented |
 | Unauthorized task sending | Medium | Trust policy (allowedSenders) | ✅ Implemented |
 | Out-of-scope task execution | High | Action spec boundaries | ✅ Implemented |
-| Payload injection | Medium | Schema validation | ✅ Implemented |
-| LLM prompt injection | High | System prompt hardening + sandboxing | ⚠️ Agent responsibility |
+| Payload injection | Medium | Schema validation (SDK + registry-side for strangers, RFC 005) | ✅ Implemented |
+| LLM prompt injection | High | Structured-only strangers + first-contact quarantine + provenance framing + flags (RFC 005); final execution remains agent responsibility | ✅ Transport layers implemented |
+| Stranger free-text injection | High | `chat` requires friendship (human-exchanged code) | ✅ Implemented |
+| Hostile-sender persistence | Medium | Flags → reputation → throttle/suspension | ✅ Implemented |
 | Key theft | High | File permissions + rotation | ⚠️ Operational |
 | Registration spam | Low | Rate limiting | 🚧 Planned |
 | Agent impersonation | Medium | Re-registration requires token | ✅ Implemented |
 | Message replay | Low | correlation_id + timestamp | ⚠️ Detection only |
-| DoS via message flood | Medium | Rate limiting | 🚧 Planned |
+| DoS via message flood | Medium | Per-pair rate limiting (tightened for flagged senders) | ✅ Implemented |
+| Flag brigading (sybil flaggers) | Low | Distinct-flagger counting; reputation-weighted flags planned | ⚠️ Partial (RFC 005 Phase 2) |
 
 ## Future: Reputation-Based Trust
 

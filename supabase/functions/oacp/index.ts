@@ -23,6 +23,8 @@ import {
   validateCapabilities,
   validatePublicKey,
   validateUUID,
+  validateSimpleSchema,
+  type SimpleSchema,
   type ValidationError,
 } from '../_shared/validation.ts';
 import type {
@@ -988,6 +990,34 @@ async function areFriends(agentA: string, agentB: string): Promise<boolean> {
 }
 
 /**
+ * RFC 005: the recipient's standing decision about a non-friend sender.
+ * Returns 'accepted' | 'blocked' | null (unknown sender).
+ */
+async function getContactStatus(
+  recipientId: string,
+  senderId: string,
+): Promise<'accepted' | 'blocked' | null> {
+  const supabase = getSupabaseAdmin();
+  const { data } = await supabase
+    .from('contacts')
+    .select('status')
+    .eq('recipient_agent_id', recipientId)
+    .eq('sender_agent_id', senderId)
+    .maybeSingle();
+  return (data?.status as 'accepted' | 'blocked' | undefined) ?? null;
+}
+
+/**
+ * RFC 002 §2: a dotted owner segment means the handle was claimed by DNS
+ * TXT proof — impersonation-proof org identity.
+ */
+function isDomainVerifiedHandle(handle: string | null | undefined): boolean {
+  if (!handle) return false;
+  const owner = handle.replace(/^@/, '').split('/')[0];
+  return owner.includes('.');
+}
+
+/**
  * POST /friends/redeem — redeem a pairing code, creating the friendship.
  * Body: { agent_id, code }. Agent auth.
  */
@@ -1304,7 +1334,7 @@ async function handleMessageSend(req: Request): Promise<Response> {
   // Verify recipient exists
   const { data: recipient, error: recipientError } = await supabase
     .from('agents')
-    .select('agent_id, name, access_policy')
+    .select('agent_id, name, access_policy, metadata')
     .eq('agent_id', body.recipient_agent_id)
     .single();
 
@@ -1312,42 +1342,148 @@ async function handleMessageSend(req: Request): Promise<Response> {
     return errorResponse('Recipient agent not found', 404);
   }
 
+  const isSealed = (body.payload as Record<string, unknown> | undefined)?.sealed === true;
+
   // RFC 002 §3.5: access policy — closed agents accept friends only (with a
-  // reply carve-out for threads the closed agent started); open agents rate
-  // limit non-friends per sender-recipient pair.
+  // reply carve-out for threads the closed agent started).
   // RFC 004: the friendship also carries a privacy policy applied below.
+  // RFC 005: the inbound trust boundary for non-friends — blocked senders
+  // bounce, free text is friends-only, task_requests are schema-checked
+  // against declared actions, first contact quarantines, and flagged
+  // senders are throttled then suspended.
   const friendship = await getFriendship(senderAgentId, recipient.agent_id);
   const senderIsFriend = friendship !== null;
+  let deliveryStatus: 'delivered' | 'quarantined' = 'delivered';
   if (!senderIsFriend) {
-    if (recipient.access_policy === 'closed') {
-      let replyAllowed = false;
-      if (body.correlation_id) {
-        const { data: prior } = await supabase
-          .from('messages')
-          .select('message_id')
-          .eq('correlation_id', body.correlation_id as string)
-          .eq('sender_agent_id', recipient.agent_id)
-          .eq('recipient_agent_id', senderAgentId)
-          .limit(1);
-        replyAllowed = !!prior && prior.length > 0;
-      }
-      if (!replyAllowed) {
+    const contactStatus = await getContactStatus(recipient.agent_id, senderAgentId);
+    if (contactStatus === 'blocked') {
+      return errorResponse(
+        `${recipient.name} has blocked messages from this agent.`,
+        403,
+        { error_code: 'sender_blocked' },
+      );
+    }
+
+    // Reply carve-out: the recipient reached out first on this thread, so
+    // responses flow without stranger restrictions (RFC 002 §3.5, extended
+    // to every recipient by RFC 005 — being messaged first IS the invite).
+    let replyAllowed = false;
+    if (body.correlation_id) {
+      const { data: prior } = await supabase
+        .from('messages')
+        .select('message_id')
+        .eq('correlation_id', body.correlation_id as string)
+        .eq('sender_agent_id', recipient.agent_id)
+        .eq('recipient_agent_id', senderAgentId)
+        .limit(1);
+      replyAllowed = !!prior && prior.length > 0;
+    }
+
+    if (recipient.access_policy === 'closed' && !replyAllowed) {
+      return errorResponse(
+        `${recipient.name} only accepts messages from friends. Ask their human for a friend code, then redeem it (oacp_add_friend).`,
+        403,
+        { error_code: 'not_friends', access_policy: 'closed' },
+      );
+    }
+
+    if (!replyAllowed) {
+      // RFC 005 §4: flag-based suspension. Distinct recipients flagging this
+      // sender inside 7 days: ≥5 suspends stranger sends, ≥2 tightens the
+      // pair rate limit below. Friend messaging is never affected.
+      const { data: flagData } = await supabase.rpc('oacp_sender_flag_count', {
+        p_sender: senderAgentId,
+        p_days: 7,
+      });
+      const flaggerCount = typeof flagData === 'number' ? flagData : 0;
+      if (flaggerCount >= 5) {
         return errorResponse(
-          `${recipient.name} only accepts messages from friends. Ask their human for a friend code, then redeem it (oacp_add_friend).`,
+          'This agent has been flagged by multiple recipients in the last 7 days and cannot message non-friends right now. Messaging friends still works; the suspension lifts as flags age out.',
           403,
-          { error_code: 'not_friends', access_policy: 'closed' },
+          { error_code: 'flag_suspended', distinct_flaggers_7d: flaggerCount },
         );
       }
-    } else {
+
+      // RFC 005 §2: structured-only strangers. Free text reaches a model's
+      // context; strangers don't get to put words there.
+      if (body.message_type === 'chat') {
+        return errorResponse(
+          `Free-text chat is a friends-only privilege — you and ${recipient.name} are not friends. Send a structured task_request against a declared action, or ask their human for a friend code (oacp_add_friend).`,
+          403,
+          { error_code: 'chat_requires_friendship' },
+        );
+      }
+      if (body.message_type !== 'task_request') {
+        return errorResponse(
+          `${body.message_type} from a non-friend is only valid as a reply on a thread the recipient started — include that thread's correlation_id.`,
+          403,
+          { error_code: 'reply_without_thread' },
+        );
+      }
+      if (isSealed) {
+        return errorResponse(
+          'Sealed payloads between non-friends are not allowed — the registry must be able to inspect stranger traffic (RFC 005). Establish a friendship for end-to-end encrypted messaging.',
+          400,
+          { error_code: 'sealed_requires_friendship' },
+        );
+      }
+
+      // Schema-check the request against the recipient's advertised actions.
+      // No declared actions → nothing to validate against; the message still
+      // quarantines below and arrives provenance-framed.
+      const specs = (recipient.metadata as Record<string, unknown> | null)
+        ?.action_specs;
+      if (Array.isArray(specs) && specs.length > 0) {
+        const requestedAction = (body.payload as Record<string, unknown> | undefined)
+          ?.action;
+        const availableNames = specs
+          .map((s) => (s as Record<string, unknown>).name)
+          .filter((n) => typeof n === 'string');
+        const spec = typeof requestedAction === 'string'
+          ? specs.find((s) => (s as Record<string, unknown>).name === requestedAction)
+          : (specs.length === 1 ? specs[0] : undefined);
+        if (!spec) {
+          return errorResponse(
+            typeof requestedAction === 'string'
+              ? `Unknown action "${requestedAction}" — ${recipient.name} accepts: ${availableNames.join(', ')}`
+              : `Non-friends must invoke a declared action — set payload.action. ${recipient.name} accepts: ${availableNames.join(', ')}`,
+            400,
+            { error_code: 'unknown_action', available_actions: availableNames },
+          );
+        }
+        const inputSchema = (spec as Record<string, unknown>).input_schema;
+        if (inputSchema && typeof inputSchema === 'object' && !Array.isArray(inputSchema)) {
+          const result = validateSimpleSchema(
+            body.payload,
+            inputSchema as SimpleSchema,
+          );
+          if (!result.valid) {
+            return errorResponse(
+              'Payload does not match the declared input schema for this action',
+              400,
+              { error_code: 'invalid_payload', validation_errors: result.errors },
+            );
+          }
+        }
+      }
+
+      // RFC 005 §3: first-contact quarantine. Until the recipient accepts
+      // this sender, messages are stored payload-withheld; accepting the
+      // contact releases everything held.
+      if (contactStatus !== 'accepted') {
+        deliveryStatus = 'quarantined';
+      }
+
+      const maxPerHour = flaggerCount >= 2 ? 2 : 20;
       const { data: pairAllowed } = await supabase.rpc('oacp_check_rate_limit', {
         p_identifier: `pair:${senderAgentId}:${recipient.agent_id}`,
         p_endpoint: '/messages/send-pair',
         p_window_seconds: 3600,
-        p_max_requests: 20,
+        p_max_requests: maxPerHour,
       });
       if (pairAllowed === false) {
         return errorResponse(
-          'Rate limit exceeded for messages to this recipient (20/hour for non-friends). Establish a friendship (friend code) for unlimited messaging.',
+          `Rate limit exceeded for messages to this recipient (${maxPerHour}/hour for non-friends${flaggerCount >= 2 ? ', tightened while this agent carries recent flags' : ''}). Establish a friendship (friend code) for unlimited messaging.`,
           429,
           { error_code: 'pair_rate_limited' },
         );
@@ -1365,7 +1501,6 @@ async function handleMessageSend(req: Request): Promise<Response> {
   if (requestedSummary !== undefined && (typeof requestedSummary !== 'string' || requestedSummary.length > 200)) {
     return errorResponse('public_summary must be a string of at most 200 characters', 400);
   }
-  const isSealed = (body.payload as Record<string, unknown> | undefined)?.sealed === true;
 
   // RFC 004: private-by-default between friends. Enforced on EVERY message
   // between the pair, on any correlation_id — this is what closes the
@@ -1476,6 +1611,7 @@ async function handleMessageSend(req: Request): Promise<Response> {
     correlation_id: (body.correlation_id as string) || null,
     sequence: (body.sequence as number) || null,
     created_at: now,
+    delivery_status: deliveryStatus,
   };
 
   const { data: message, error: insertError } = await supabase
@@ -1501,6 +1637,13 @@ async function handleMessageSend(req: Request): Promise<Response> {
       message_type: body.message_type,
       created_at: message.created_at,
       visibility: threadVisibility ?? 'open',
+      delivery_status: deliveryStatus,
+      ...(deliveryStatus === 'quarantined'
+        ? {
+          note:
+            `First contact — ${recipient.name} has not accepted this agent as a contact yet, so the message is held payload-withheld until their side accepts. It is not lost; acceptance releases it.`,
+        }
+        : {}),
     },
     201,
   );
@@ -1590,10 +1733,336 @@ async function handleGetMessages(req: Request): Promise<Response> {
     return errorResponse('Failed to retrieve messages', 500);
   }
 
+  // RFC 005: enrich every message with counterpart provenance (who sent it,
+  // verified identity, relationship to this agent) so downstream clients can
+  // frame external content, and redact quarantined inbox payloads.
+  const rows = (messages || []) as Record<string, unknown>[];
+  const isInbox = direction !== 'outbox';
+  const counterpartIds = [
+    ...new Set(
+      rows.map((m) =>
+        (isInbox ? m.sender_agent_id : m.recipient_agent_id) as string
+      ),
+    ),
+  ];
+
+  const agentInfo: Record<
+    string,
+    { name: string | null; handle: string | null; owner_handle: string | null }
+  > = {};
+  const friendIds = new Set<string>();
+  const contactStatusBySender: Record<string, string> = {};
+
+  if (counterpartIds.length > 0) {
+    const { data: infoRows } = await supabase
+      .from('agents')
+      .select('agent_id, name, handle, owner_handle')
+      .in('agent_id', counterpartIds);
+    for (const r of infoRows || []) {
+      agentInfo[r.agent_id as string] = {
+        name: (r.name as string) ?? null,
+        handle: (r.handle as string) ?? null,
+        owner_handle: (r.owner_handle as string) ?? null,
+      };
+    }
+
+    const { data: fRows } = await supabase
+      .from('friendships')
+      .select('agent_lo, agent_hi')
+      .or(`agent_lo.eq.${agentId},agent_hi.eq.${agentId}`);
+    for (const f of fRows || []) {
+      friendIds.add(
+        (f.agent_lo === agentId ? f.agent_hi : f.agent_lo) as string,
+      );
+    }
+
+    if (isInbox) {
+      const { data: cRows } = await supabase
+        .from('contacts')
+        .select('sender_agent_id, status')
+        .eq('recipient_agent_id', agentId)
+        .in('sender_agent_id', counterpartIds);
+      for (const c of cRows || []) {
+        contactStatusBySender[c.sender_agent_id as string] = c.status as string;
+      }
+    }
+  }
+
+  const enriched = rows.map((m) => {
+    const cpId = (isInbox ? m.sender_agent_id : m.recipient_agent_id) as string;
+    const info = agentInfo[cpId];
+    const relationship = friendIds.has(cpId)
+      ? 'friend'
+      : contactStatusBySender[cpId] === 'accepted'
+      ? 'accepted_contact'
+      : contactStatusBySender[cpId] === 'blocked'
+      ? 'blocked'
+      : 'stranger';
+    const counterpart = {
+      agent_id: cpId,
+      name: info?.name ?? null,
+      handle: info?.handle ?? null,
+      owner_handle: info?.owner_handle ?? null,
+      domain_verified: isDomainVerifiedHandle(info?.handle),
+      relationship,
+    };
+    const out: Record<string, unknown> = {
+      ...m,
+      [isInbox ? 'sender_info' : 'recipient_info']: counterpart,
+    };
+
+    if (isInbox && m.delivery_status === 'quarantined') {
+      const rawPayload = m.payload;
+      const action =
+        rawPayload && typeof rawPayload === 'object' && !Array.isArray(rawPayload)
+          ? (rawPayload as Record<string, unknown>).action
+          : undefined;
+      out.payload = {
+        quarantined: true,
+        ...(typeof action === 'string' ? { action } : {}),
+        payload_bytes: JSON.stringify(rawPayload ?? {}).length,
+        note:
+          'First contact from an unknown sender — payload withheld until this agent accepts the contact (oacp_contact / POST /contacts/set). Accepting releases every held message from this sender; blocking discards future sends.',
+      };
+    }
+    return out;
+  });
+
   return jsonResponse({
-    messages: messages || [],
+    messages: enriched,
     total: count || 0,
     limit,
+  });
+}
+
+// ============================================================
+// RFC 005: Contacts + Flags
+// ============================================================
+
+/** Authenticate a request as a specific agent via Bearer token. */
+async function authenticateAgent(
+  req: Request,
+  agentId: string,
+): Promise<{ ok: true } | { ok: false; response: Response }> {
+  const token = extractBearerToken(req);
+  if (!token) {
+    return {
+      ok: false,
+      response: errorResponse('Authorization header with Bearer token required', 401),
+    };
+  }
+  const supabase = getSupabaseAdmin();
+  const tokenHash = await hashToken(token);
+  const { data: agent, error } = await supabase
+    .from('agents')
+    .select('agent_id, registry_token')
+    .eq('agent_id', agentId)
+    .single();
+  if (error || !agent) {
+    return { ok: false, response: errorResponse('Agent not found', 404) };
+  }
+  if (agent.registry_token !== tokenHash) {
+    return { ok: false, response: errorResponse('Invalid registry token', 403) };
+  }
+  return { ok: true };
+}
+
+/**
+ * POST /contacts/set — accept or block a non-friend sender (RFC 005 §3).
+ * Body: { agent_id, sender_agent_id, status: 'accepted' | 'blocked' }
+ * Accepting releases every quarantined message held from that sender.
+ */
+async function handleContactsSet(req: Request): Promise<Response> {
+  let body: Record<string, unknown>;
+  try {
+    body = await req.json();
+  } catch {
+    return errorResponse('Invalid JSON body', 400);
+  }
+
+  const requiredErrors = validateRequired(body, ['agent_id', 'sender_agent_id', 'status']);
+  if (requiredErrors.length > 0) return validationErrorResponse(requiredErrors);
+  const idErrors = [
+    ...validateUUID(body.agent_id, 'agent_id'),
+    ...validateUUID(body.sender_agent_id, 'sender_agent_id'),
+  ];
+  if (idErrors.length > 0) return validationErrorResponse(idErrors);
+  if (body.status !== 'accepted' && body.status !== 'blocked') {
+    return errorResponse("status must be 'accepted' or 'blocked'", 400);
+  }
+  if (body.agent_id === body.sender_agent_id) {
+    return errorResponse('agent_id and sender_agent_id must differ', 400);
+  }
+
+  const auth = await authenticateAgent(req, body.agent_id as string);
+  if (!auth.ok) return auth.response;
+
+  const supabase = getSupabaseAdmin();
+
+  const { data: sender } = await supabase
+    .from('agents')
+    .select('agent_id, name')
+    .eq('agent_id', body.sender_agent_id)
+    .single();
+  if (!sender) return errorResponse('Sender agent not found', 404);
+
+  const { error: upsertError } = await supabase.from('contacts').upsert({
+    recipient_agent_id: body.agent_id as string,
+    sender_agent_id: body.sender_agent_id as string,
+    status: body.status as string,
+    decided_via: 'manual',
+    updated_at: new Date().toISOString(),
+  }, { onConflict: 'recipient_agent_id,sender_agent_id' });
+  if (upsertError) {
+    console.error('[OACP] Contact upsert error:', upsertError);
+    return errorResponse('Failed to save contact decision', 500);
+  }
+
+  let released = 0;
+  if (body.status === 'accepted') {
+    const { data: releasedRows, error: releaseError } = await supabase
+      .from('messages')
+      .update({ delivery_status: 'delivered' })
+      .eq('recipient_agent_id', body.agent_id as string)
+      .eq('sender_agent_id', body.sender_agent_id as string)
+      .eq('delivery_status', 'quarantined')
+      .select('message_id');
+    if (releaseError) {
+      console.error('[OACP] Quarantine release error:', releaseError);
+      return errorResponse('Contact saved but releasing held messages failed', 500);
+    }
+    released = releasedRows?.length ?? 0;
+  }
+
+  console.log(
+    `[OACP] Contact decision: ${body.agent_id} ${body.status} ${sender.name} (${released} released)`,
+  );
+
+  return jsonResponse({
+    recipient_agent_id: body.agent_id,
+    sender_agent_id: body.sender_agent_id,
+    sender_name: sender.name,
+    status: body.status,
+    released_messages: released,
+  });
+}
+
+/**
+ * GET /contacts?agent_id= — list this agent's contact decisions.
+ */
+async function handleContactsList(req: Request): Promise<Response> {
+  const url = new URL(req.url);
+  const agentId = url.searchParams.get('agent_id');
+  if (!agentId) return errorResponse('agent_id query parameter is required', 400);
+  const idErrors = validateUUID(agentId, 'agent_id');
+  if (idErrors.length > 0) return validationErrorResponse(idErrors);
+
+  const auth = await authenticateAgent(req, agentId);
+  if (!auth.ok) return auth.response;
+
+  const supabase = getSupabaseAdmin();
+  const { data: rows, error } = await supabase
+    .from('contacts')
+    .select('sender_agent_id, status, decided_via, created_at, updated_at, sender:sender_agent_id(name, handle, owner_handle)')
+    .eq('recipient_agent_id', agentId)
+    .order('updated_at', { ascending: false });
+  if (error) {
+    console.error('[OACP] Contacts list error:', error);
+    return errorResponse('Failed to list contacts', 500);
+  }
+
+  return jsonResponse({
+    contacts: (rows || []).map((r) => {
+      const sender = r.sender as unknown as
+        | { name?: string; handle?: string; owner_handle?: string }
+        | null;
+      return {
+        sender_agent_id: r.sender_agent_id,
+        name: sender?.name ?? null,
+        handle: sender?.handle ?? null,
+        owner_handle: sender?.owner_handle ?? null,
+        status: r.status,
+        decided_via: r.decided_via,
+        updated_at: r.updated_at,
+      };
+    }),
+  });
+}
+
+/**
+ * POST /messages/flag — report a hostile inbound message (RFC 005 §4).
+ * Body: { agent_id, message_id, reason, note?, block? }
+ * Only the message's recipient may flag it. block: true also blocks the sender.
+ */
+async function handleMessageFlag(req: Request): Promise<Response> {
+  let body: Record<string, unknown>;
+  try {
+    body = await req.json();
+  } catch {
+    return errorResponse('Invalid JSON body', 400);
+  }
+
+  const requiredErrors = validateRequired(body, ['agent_id', 'message_id', 'reason']);
+  if (requiredErrors.length > 0) return validationErrorResponse(requiredErrors);
+  const idErrors = [
+    ...validateUUID(body.agent_id, 'agent_id'),
+    ...validateUUID(body.message_id, 'message_id'),
+  ];
+  if (idErrors.length > 0) return validationErrorResponse(idErrors);
+
+  const REASONS = ['prompt_injection', 'spam', 'abuse', 'other'];
+  if (!REASONS.includes(body.reason as string)) {
+    return errorResponse(`reason must be one of: ${REASONS.join(', ')}`, 400);
+  }
+  if (body.note !== undefined && (typeof body.note !== 'string' || body.note.length > 500)) {
+    return errorResponse('note must be a string of at most 500 characters', 400);
+  }
+
+  const auth = await authenticateAgent(req, body.agent_id as string);
+  if (!auth.ok) return auth.response;
+
+  const supabase = getSupabaseAdmin();
+  const { data: result, error } = await supabase.rpc('oacp_register_flag', {
+    p_message_id: body.message_id as string,
+    p_flagged_by: body.agent_id as string,
+    p_reason: body.reason as string,
+    p_note: (body.note as string) ?? null,
+  });
+  if (error) {
+    console.error('[OACP] Flag RPC error:', error);
+    return errorResponse('Failed to record flag', 500);
+  }
+
+  const flagResult = result as Record<string, unknown>;
+  if (flagResult.error === 'message_not_found') {
+    return errorResponse('Message not found', 404);
+  }
+  if (flagResult.error === 'not_recipient') {
+    return errorResponse('Only the recipient of a message can flag it', 403);
+  }
+  if (flagResult.error === 'cannot_flag_own_message') {
+    return errorResponse('Cannot flag your own message', 400);
+  }
+
+  let blocked = false;
+  if (body.block === true) {
+    const { error: blockError } = await supabase.from('contacts').upsert({
+      recipient_agent_id: body.agent_id as string,
+      sender_agent_id: flagResult.sender_agent_id as string,
+      status: 'blocked',
+      decided_via: 'manual',
+      updated_at: new Date().toISOString(),
+    }, { onConflict: 'recipient_agent_id,sender_agent_id' });
+    blocked = !blockError;
+  }
+
+  console.log(
+    `[OACP] Flag: ${body.agent_id} flagged message ${body.message_id} (${body.reason})${blocked ? ' + blocked sender' : ''}`,
+  );
+
+  return jsonResponse({
+    ...flagResult,
+    ...(body.block === true ? { sender_blocked: blocked } : {}),
   });
 }
 
@@ -2570,6 +3039,15 @@ const routes: Record<string, Record<string, RouteHandler>> = {
   },
   '/messages': {
     GET: (req) => handleGetMessages(req),
+  },
+  '/messages/flag': {
+    POST: (req) => handleMessageFlag(req),
+  },
+  '/contacts/set': {
+    POST: (req) => handleContactsSet(req),
+  },
+  '/contacts': {
+    GET: (req) => handleContactsList(req),
   },
   '/balance': {
     GET: (req) => handleGetBalance(req),
