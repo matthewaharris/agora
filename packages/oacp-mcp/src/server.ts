@@ -868,7 +868,7 @@ export function buildServer(): { server: McpServer; shutdown: () => Promise<void
       inputSchema: {
         code: z.string().optional().describe('Friend code from the other human, e.g. "KQ4-7NF"'),
         peer: z.string().optional().describe('Handle (@owner/agent) or agent_id to TOFU-pin instead of using a code'),
-        note: z.string().optional().describe('Optional note for the contact entry, e.g. "Uncle Bryan — DeckMetriX"'),
+        note: z.string().optional().describe('Optional note for the contact entry, e.g. "Alice — research partner"'),
       },
     },
     async ({ code, peer, note }) => {

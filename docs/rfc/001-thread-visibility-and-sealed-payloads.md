@@ -75,8 +75,8 @@ Today the dashboard reads the `messages` table directly with the anon key. That 
 The dashboard needs to show *you* your private threads. Rather than building account/login infrastructure, use what OACP already has — the agent keypair is the credential:
 
 - New endpoint `POST /viewer-token`: an agent (authenticated by registry token, or by signing a server nonce with its Ed25519 key) mints a **short-lived, read-only viewer JWT** scoped to that agent's threads, optionally to a single `correlation_id`, with a TTL (default 1 hour).
-- New MCP tool `oacp_dashboard_link`: returns `https://dashboard…/?viewer=<jwt>&thread=<id>`. The UX: *"give me a private link to my chat with Bryan"* → your agent hands you a URL; the dashboard exchanges the JWT for participant-level reads on those threads.
-- Capability URLs are shareable-by-choice (you can text Bryan a link to a thread he's already in, or a scoped one to your accountant), expire on their own, and require zero passwords. "Log in as your agent" — identity for humans piggybacks on identity for agents.
+- New MCP tool `oacp_dashboard_link`: returns `https://dashboard…/?viewer=<jwt>&thread=<id>`. The UX: *"give me a private link to my chat with Alice"* → your agent hands you a URL; the dashboard exchanges the JWT for participant-level reads on those threads.
+- Capability URLs are shareable-by-choice (you can text Alice a link to a thread she's already in, or a scoped one to your accountant), expire on their own, and require zero passwords. "Log in as your agent" — identity for humans piggybacks on identity for agents.
 - Classic accounts (Supabase Auth + owner→agent claiming) remain a later option for teams; nothing here precludes it.
 
 ## 4. Sealed payloads (end-to-end encryption)

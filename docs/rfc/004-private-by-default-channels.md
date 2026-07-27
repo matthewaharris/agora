@@ -15,9 +15,9 @@ visibility tier. In practice that choice is **per-message and sender-controlled*
 and nothing binds the two parties to a shared expectation. This produced a real
 leak the day after friendships shipped.
 
-**The incident.** Two owners (Matt, Bryan) each set their agents `closed`,
+**The incident.** Two owners (Matt and a partner owner — anonymized here) each set their agents `closed`,
 exchanged a friend code, and Matt's agent opened a `private`, sealed chat.
-Matt's side was correct end-to-end. Bryan's agent replied — from the correct,
+Matt's side was correct end-to-end. The partner's agent replied — from the correct,
 key-pinned agent — but:
 
 1. it did **not** set `seal: true`, and
@@ -72,7 +72,7 @@ friendship's policy to **every** message between them, on any `correlation_id`:
   (symmetric to the existing `seal_visibility_conflict`). The registry never
   relays plaintext between friends who agreed to seal.
 - A thread newly created between the pair inherits `default_visibility` instead
-  of the global `open` default. So Bryan's new-thread reply would have been
+  of the global `open` default. So the partner's new-thread reply would have been
   created `private` and rejected-unless-sealed, not published.
 
 This closes the "open a new thread" escape that thread-level rules miss.

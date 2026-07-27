@@ -682,7 +682,7 @@ async function handleOwnersAttach(req: Request): Promise<Response> {
 // ============================================================
 
 const HANDLE_RE = /^[a-z0-9](?:[a-z0-9-]{0,30}[a-z0-9])?$/;
-// Domain handles (RFC 002 §4): @liteneen.net, @virtussquared.com
+// Domain handles (RFC 002 §4): @liteneen.net, @acme-corp.example
 const DOMAIN_HANDLE_RE = /^(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z][a-z0-9-]{1,17}$/;
 const RESERVED_HANDLES = new Set([
   'oacp', 'liteneen', 'agora', 'stait', 'admin', 'administrator', 'registry',

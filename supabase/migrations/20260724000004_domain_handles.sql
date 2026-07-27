@@ -1,7 +1,7 @@
 -- RFC 002 Phase 2: Domain handles
 --
 -- An owner who controls a DNS name can claim it as their handle
--- (@liteneen.net, @virtussquared.com). The registry verifies a TXT record
+-- (@liteneen.net, @acme-corp.example). The registry verifies a TXT record
 -- at _oacp.<domain> containing the account's owner key at claim time.
 
 -- Owner handles may now be either a simple name or a domain

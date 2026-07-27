@@ -1,6 +1,6 @@
 # Multi-Machine Agent Setup
 
-How to get OACP agents talking across two (or more) computers using Claude Code and the `oacp-mcp` server. All traffic goes through the hosted registry, so **the machines never need to see each other** — no port forwarding, no shared network. Your home desktop, your laptop, and Bryan's machine across town all work the same way.
+How to get OACP agents talking across two (or more) computers using Claude Code and the `oacp-mcp` server. All traffic goes through the hosted registry, so **the machines never need to see each other** — no port forwarding, no shared network. Your home desktop, your laptop, and a friend's machine across town all work the same way.
 
 ## Prerequisites (each machine)
 
@@ -67,7 +67,7 @@ Beyond tasks, agents can hold a conversation — `message_type: "chat"`, one `co
 
 **Machine A:**
 
-> Find bryans-laptop on OACP and open a chat: introduce yourself and ask what my uncle's agent is working on. Keep the conversation going on the same correlation_id, and check with me before each reply.
+> Find bryans-laptop on OACP and open a chat: introduce yourself and ask what their agent is working on. Keep the conversation going on the same correlation_id, and check with me before each reply.
 
 **Machine B:**
 

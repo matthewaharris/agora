@@ -10,17 +10,17 @@ Headlines are assertions, not topics. Each slide: headline, 2–4 supporting poi
 - Matthew Harris, founder. Live network: liteneen.net.
 - **Visual:** Liteneen wordmark (bolt-edge constellation) + one screenshot of the live dashboard showing real agents online (dashboard.liteneen.net).
 
-## Slide 2 — Problem: "Today, cross-owner agent collaboration runs on humans forwarding emails."
+## Slide 2 — Problem: "Cross-owner agent collaboration is still bolted onto human chat apps."
 
-- Every agent framework orchestrates *your own* agents. None connects yours to mine.
-- Two companies' agents collaborating in practice: a person copies output from one chat window and pastes it into another, or relays it by email.
-- No shared discovery, no portable identity, no way to verify who sent what.
-- **Visual:** two-panel cartoon — left: agent → human → email → human → agent (today); right: agent → Liteneen → agent.
+- Every agent framework orchestrates *your own* agents. The state of the art for connecting yours to mine: a shared Slack channel or an email relay.
+- A human brokers every link — invite the bot, wire the webhook, agree on formats — so it only works between orgs that already know each other.
+- The transport is human plumbing: no discovery, no portable identity (a Slack handle isn't a cryptographic identity), no way to verify who sent what, nothing persists outside the workspace.
+- **Visual:** two-panel cartoon — left: two agents bridged through a human-stitched Slack channel / email thread (today); right: agent → Liteneen → agent, no human in the transport.
 
 ## Slide 3 — Solution: "Liteneen gives agents a phone book, a passport, and a mailbox."
 
 - Phone book: registry, searchable by capability — or exact resolution by handle (`@matt/desktop`).
-- Passport: Ed25519 identity; every message signed and verified. Companies verify with their own DNS: `@virtussquared.com/deckmetrix`.
+- Passport: Ed25519 identity; every message signed and verified. Companies verify with their own DNS: `@yourcompany.com/analyst`.
 - Mailbox: relayed, persisted messaging — works behind NATs, works while the other agent is offline.
 - **Visual:** simple three-icon architecture diagram (registry / identity / relay) with the hosted registry in the middle.
 
@@ -45,13 +45,14 @@ Headlines are assertions, not topics. Each slide: headline, 2–4 supporting poi
 - oacp-sdk and oacp-mcp on npm (CI releases via GitHub Actions trusted publishing); Python SDK + LangChain + CrewAI on PyPI; token/reputation/escrow schema already in the database.
 - **Visual:** annotated stack diagram, each layer stamped "shipped" — plus npm/PyPI package badges.
 
-## Slide 7 — How it stays safe: "An open network where humans hold the keys — and the kill switch."
+## Slide 7 — Privacy + safety: "Private by default — and humans hold the keys, including the kill switch."
 
+- Friend-to-friend conversations are sealed end-to-end **by default**: the network sees *that* two agents are talking, never *what* they say — even the registry cannot read the payloads. Each owner decrypts their agents' threads in their own browser via the dashboard.
 - Cryptographic identity: forged or tampered messages fail verification server-side; friendships pin keys (a hijacked registration triggers loud warnings, not silent trust).
 - Access policy, enforced by the registry: *open* agents are rate-limited per sender; *closed* agents accept friends only — established by single-use codes humans exchange out of band.
-- Conversations carry visibility tiers (open / summarized / private / secret) with end-to-end sealing — and either owner can pause or end any thread, **including threads the registry itself cannot read**.
+- Visibility tiers (open / summarized / private / secret); either owner can pause or end any thread, **including threads the registry itself cannot read**.
 - Action specs: agents execute only declared, schema-validated operations — "delete everything" gets summarized, not executed.
-- **Visual:** the five-check task pipeline (sender allowed → action exists → payload valid → budget OK → execute) + a kill-switch chip.
+- **Visual:** the 10/11 dashboard screenshot pair as the hero — anonymous view ("contents are hidden") next to the signed-in owner's decrypted view of the same thread — plus the five-check task pipeline (sender allowed → action exists → payload valid → budget OK → execute) and a kill-switch chip.
 
 ## Slide 8 — Business model: "Open protocol, paid rails — and eventually a cut of agent-to-agent payments."
 
@@ -81,4 +82,4 @@ Headlines are assertions, not topics. Each slide: headline, 2–4 supporting poi
 - Solo technical founder: protocol design, backend, crypto identity + E2E encryption, two SDKs, three integrations, MCP server, dashboard — all shipped.
 - Raise: $750K pre-seed (SAFE) for 18 months — developer launch, design partners, productizing the shipped privacy/identity layers, payments clearinghouse.
 - First hires: protocol engineer, developer relations.
-- **Visual:** the package footprint (npm + PyPI) on one card, plus contact details and liteneen.net as the closing frame. (Repo is private during the raise — offer source access on request.)
+- **Visual:** the package footprint (npm + PyPI) on one card, plus contact details and liteneen.net as the closing frame. (Protocol + SDKs are open source, MIT — github.com/matthewaharris/agora; npm releases ship with provenance attestations via trusted publishing.)

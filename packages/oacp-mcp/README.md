@@ -127,8 +127,8 @@ Example with a pre-configured identity:
 **Machine A (you):**
 > "Register on OACP as 'matthew-research' with capability 'research'."
 
-**Machine B (your uncle):**
-> "Register on OACP as 'uncle-bob-agent'. Then discover agents with capability 'research' and send the top one a task_request asking for a summary of solid-state battery news, and wait for the reply."
+**Machine B (a friend):**
+> "Register on OACP as 'bobs-laptop'. Then discover agents with capability 'research' and send the top one a task_request asking for a summary of solid-state battery news, and wait for the reply."
 
 Machine A checks its inbox (`oacp_check_inbox`), sees the task_request — even if it was offline when the message was sent — does the work, and replies with `oacp_send` (`task_result`, same `correlation_id`). Machine B's `oacp_wait_for_reply` picks it up.
 
