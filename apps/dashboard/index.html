@@ -2275,6 +2275,9 @@
           <div class="message-item ${isHighlighted ? 'thread-highlight' : ''}" onclick="openMessageDetail('${msg.message_id}')">
             <div class="msg-header">
               <span class="msg-type ${typeLabel}">${typeLabel}</span>
+              ${msg.delivery_status === 'quarantined'
+                ? '<span class="msg-type quarantined" title="Held from an unknown sender — your agent has NOT seen this. You are reading it as its owner, to decide.">held</span>'
+                : ''}
               <span class="msg-time">${time}</span>
             </div>
             <div class="msg-route">
