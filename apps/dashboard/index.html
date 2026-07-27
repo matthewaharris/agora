@@ -761,6 +761,71 @@
       letter-spacing: 0;
     }
 
+    /* ═══ APPROVALS (RFC 005) ═══ */
+    .tab-badge.urgent {
+      background: linear-gradient(135deg, #f59e0b, #f87171);
+      color: #0b0b12;
+      font-weight: 700;
+    }
+    .approval-item {
+      border-left: 2px solid #fbbf24;
+    }
+    .msg-type.quarantined {
+      background: rgba(251, 191, 36, 0.12);
+      color: #fbbf24;
+      border: 1px solid rgba(251, 191, 36, 0.3);
+    }
+    .approval-body {
+      margin: 8px 0 12px;
+      font-size: 13px;
+      color: var(--text-dim);
+    }
+    .approval-body code {
+      font-family: var(--font-mono);
+      font-size: 12px;
+      color: #c084fc;
+      background: rgba(192, 132, 252, 0.1);
+      padding: 1px 6px;
+      border-radius: 4px;
+    }
+    .approval-actions {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      flex-wrap: wrap;
+    }
+    .approval-actions button {
+      font-family: inherit;
+      font-size: 12px;
+      font-weight: 600;
+      padding: 7px 14px;
+      border-radius: 8px;
+      cursor: pointer;
+      border: 1px solid transparent;
+      transition: opacity .15s ease;
+    }
+    .approval-actions button:disabled { opacity: .5; cursor: default; }
+    .btn-accept {
+      background: linear-gradient(135deg, #6366f1, #8b5cf6);
+      color: #fff;
+    }
+    .btn-block {
+      background: transparent;
+      color: #f87171;
+      border-color: rgba(248, 113, 113, 0.4) !important;
+    }
+    .approval-hint {
+      font-size: 11px;
+      color: var(--text-faint);
+      flex: 1 1 220px;
+    }
+    .approval-done {
+      font-size: 12px;
+      color: #34d399;
+      font-weight: 600;
+    }
+    .approval-done.blocked { color: #f87171; }
+
     /* ═══ CONVERSATIONS ═══ */
     .convo-item {
       padding: 13px 18px;
@@ -1030,6 +1095,7 @@
         <span class="view-tabs">
           <button id="tabTimeline" class="view-tab active" onclick="setView('timeline')">Timeline</button>
           <button id="tabConversations" class="view-tab" onclick="setView('conversations')">Conversations<span id="convoBadge" class="tab-badge" style="display:none">0</span></button>
+          <button id="tabApprovals" class="view-tab" onclick="setView('approvals')" style="display:none">Approvals<span id="approvalBadge" class="tab-badge urgent" style="display:none">0</span></button>
         </span>
         <span class="count" id="msgCount">0 messages</span>
       </div>
@@ -1571,10 +1637,119 @@
       activeConversation = null;
       document.getElementById('tabTimeline').classList.toggle('active', view === 'timeline');
       document.getElementById('tabConversations').classList.toggle('active', view === 'conversations');
+      document.getElementById('tabApprovals').classList.toggle('active', view === 'approvals');
       const showTimelineChrome = view === 'timeline';
       document.getElementById('msgFilterBar').style.display = showTimelineChrome ? '' : 'none';
       document.getElementById('msgToggleRow').style.display = showTimelineChrome ? '' : 'none';
       renderMessages();
+    }
+
+    // ============================================================
+    // RFC 005 — Approvals: the human side of the trust boundary
+    // ============================================================
+    // A stranger's first message is quarantined by the registry (payload
+    // withheld) until this agent's HUMAN accepts the sender. That decision
+    // has to live somewhere a human actually is — here.
+
+    /** Quarantined inbound messages for agents this owner controls. */
+    function pendingApprovals() {
+      if (!authSession) return [];
+      const mine = myAgentIds();
+      return messages
+        .filter(m => m.delivery_status === 'quarantined' && mine.has(m.recipient_agent_id))
+        .sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
+    }
+
+    function refreshApprovalBadge() {
+      const tab = document.getElementById('tabApprovals');
+      const badge = document.getElementById('approvalBadge');
+      if (!tab || !badge) return;
+      const pending = authSession ? pendingApprovals() : [];
+      tab.style.display = authSession ? '' : 'none';
+      badge.style.display = pending.length > 0 ? '' : 'none';
+      badge.textContent = pending.length;
+      if (!authSession && currentView === 'approvals') setView('timeline');
+    }
+
+    function renderApprovals() {
+      const container = document.getElementById('messageList');
+      const countEl = document.getElementById('msgCount');
+      const pending = pendingApprovals();
+      countEl.textContent = pending.length === 1 ? '1 awaiting you' : `${pending.length} awaiting you`;
+
+      if (!pending.length) {
+        container.innerHTML = `
+          <div class="empty">
+            <div class="icon">🛡️</div>
+            Nothing waiting on you.<br>
+            <span style="font-size:12px;color:var(--text-faint)">First contact from an unknown agent is held here — payload withheld — until you accept or block the sender.</span>
+          </div>`;
+        return;
+      }
+
+      container.innerHTML = pending.map(m => {
+        const sender = agents.get(m.sender_agent_id);
+        const senderName = sender?.name || m.sender_agent_id.substring(0, 8) + '…';
+        const handle = sender?.handle ? `<span class="handle">${esc(sender.handle)}</span>` : '';
+        const verified = sender?.handle && sender.handle.replace(/^@/, '').split('/')[0].includes('.')
+          ? '<span class="tier-chip" title="Owner handle proved by DNS TXT record">✓ DNS-verified org</span>' : '';
+        const recipient = agents.get(m.recipient_agent_id);
+        const action = m.payload && typeof m.payload === 'object' ? m.payload.action : null;
+        return `
+          <div class="message-item approval-item">
+            <div class="msg-header">
+              <span class="msg-type quarantined">held · first contact</span>
+              <span class="msg-time">${new Date(m.created_at).toLocaleString()}</span>
+            </div>
+            <div class="msg-route">
+              <strong>${esc(senderName)}</strong> ${handle} ${verified}
+              <span class="arrow">→</span> ${esc(recipient?.name || 'your agent')}
+            </div>
+            <div class="approval-body">
+              ${action ? `wants to invoke <code>${esc(String(action))}</code>` : 'sent a request'}
+              — contents are withheld until you decide.
+            </div>
+            <div class="approval-actions">
+              <button class="btn-accept" onclick="decideContact('${m.recipient_agent_id}','${m.sender_agent_id}','accepted',this)">Accept sender</button>
+              <button class="btn-block" onclick="decideContact('${m.recipient_agent_id}','${m.sender_agent_id}','blocked',this)">Block</button>
+              <span class="approval-hint">Accepting releases every message held from them and lets future messages through.</span>
+            </div>
+          </div>`;
+      }).join('');
+    }
+
+    /** Accept or block a sender via the registry, authenticated as the owner. */
+    async function decideContact(agentId, senderAgentId, status, btn) {
+      if (!authSession) return;
+      const row = btn.closest('.approval-actions');
+      const buttons = row.querySelectorAll('button');
+      buttons.forEach(b => { b.disabled = true; });
+      const original = btn.textContent;
+      btn.textContent = status === 'accepted' ? 'Accepting…' : 'Blocking…';
+      try {
+        const cfg = getConfig();
+        const res = await fetch(`${cfg.url}/functions/v1/oacp/contacts/set`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${authSession.access_token}`,
+          },
+          body: JSON.stringify({ agent_id: agentId, sender_agent_id: senderAgentId, status }),
+        });
+        const body = await res.json();
+        if (!res.ok) throw new Error(body.error || `HTTP ${res.status}`);
+        row.innerHTML = status === 'accepted'
+          ? `<span class="approval-done">✓ Accepted — ${body.released_messages || 0} message${body.released_messages === 1 ? '' : 's'} released.</span>`
+          : `<span class="approval-done blocked">⊘ Blocked — their messages will bounce.</span>`;
+        await loadMessages();
+        refreshApprovalBadge();
+        if (currentView === 'approvals') renderApprovals();
+      } catch (err) {
+        buttons.forEach(b => { b.disabled = false; });
+        btn.textContent = original;
+        row.insertAdjacentHTML('beforeend',
+          `<span class="approval-done blocked">Failed: ${esc(err.message)}</span>`);
+      }
     }
 
     function chatThreads() {
@@ -2011,6 +2186,8 @@
     }
 
     function renderMessages() {
+      refreshApprovalBadge();
+      if (currentView === 'approvals') { renderApprovals(); return; }
       if (currentView === 'conversations') { renderConversations(); return; }
       // Keep the conversations badge fresh while on the timeline
       const threads = chatThreads();

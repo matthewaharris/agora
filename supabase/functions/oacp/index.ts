@@ -1907,11 +1907,19 @@ async function handleGetMessages(req: Request): Promise<Response> {
 // RFC 005: Contacts + Flags
 // ============================================================
 
-/** Authenticate a request as a specific agent via Bearer token. */
-async function authenticateAgent(
+/**
+ * Authenticate a request as a specific agent — either by the agent's own
+ * registry token, or by its human owner's signed-in session (RFC 003 owner
+ * account JWT).
+ *
+ * The owner path is what lets the dashboard act as the consent gate: RFC 005
+ * makes a human responsible for accepting or blocking unknown senders, and a
+ * human at a browser has an owner session, never the agent's registry token.
+ */
+async function authenticateAgentOrOwner(
   req: Request,
   agentId: string,
-): Promise<{ ok: true } | { ok: false; response: Response }> {
+): Promise<{ ok: true; via: 'agent' | 'owner' } | { ok: false; response: Response }> {
   const token = extractBearerToken(req);
   if (!token) {
     return {
@@ -1920,19 +1928,39 @@ async function authenticateAgent(
     };
   }
   const supabase = getSupabaseAdmin();
-  const tokenHash = await hashToken(token);
   const { data: agent, error } = await supabase
     .from('agents')
-    .select('agent_id, registry_token')
+    .select('agent_id, registry_token, owner_id')
     .eq('agent_id', agentId)
     .single();
   if (error || !agent) {
     return { ok: false, response: errorResponse('Agent not found', 404) };
   }
-  if (agent.registry_token !== tokenHash) {
-    return { ok: false, response: errorResponse('Invalid registry token', 403) };
+
+  const tokenHash = await hashToken(token);
+  if (agent.registry_token === tokenHash) {
+    return { ok: true, via: 'agent' };
   }
-  return { ok: true };
+
+  // Not the agent's token — is it the owner's session for this agent?
+  if (agent.owner_id) {
+    try {
+      const { data: userData } = await supabase.auth.getUser(token);
+      if (userData?.user?.id && userData.user.id === agent.owner_id) {
+        return { ok: true, via: 'owner' };
+      }
+    } catch {
+      // fall through to the generic failure below
+    }
+  }
+
+  return {
+    ok: false,
+    response: errorResponse(
+      'Invalid registry token, and not a signed-in owner session for this agent',
+      403,
+    ),
+  };
 }
 
 /**
@@ -1962,7 +1990,7 @@ async function handleContactsSet(req: Request): Promise<Response> {
     return errorResponse('agent_id and sender_agent_id must differ', 400);
   }
 
-  const auth = await authenticateAgent(req, body.agent_id as string);
+  const auth = await authenticateAgentOrOwner(req, body.agent_id as string);
   if (!auth.ok) return auth.response;
 
   const supabase = getSupabaseAdmin();
@@ -2025,7 +2053,7 @@ async function handleContactsList(req: Request): Promise<Response> {
   const idErrors = validateUUID(agentId, 'agent_id');
   if (idErrors.length > 0) return validationErrorResponse(idErrors);
 
-  const auth = await authenticateAgent(req, agentId);
+  const auth = await authenticateAgentOrOwner(req, agentId);
   if (!auth.ok) return auth.response;
 
   const supabase = getSupabaseAdmin();
@@ -2086,7 +2114,7 @@ async function handleMessageFlag(req: Request): Promise<Response> {
     return errorResponse('note must be a string of at most 500 characters', 400);
   }
 
-  const auth = await authenticateAgent(req, body.agent_id as string);
+  const auth = await authenticateAgentOrOwner(req, body.agent_id as string);
   if (!auth.ok) return auth.response;
 
   const supabase = getSupabaseAdmin();
