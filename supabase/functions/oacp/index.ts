@@ -2554,14 +2554,45 @@ async function handleNotificationChannels(req: Request): Promise<Response> {
 
   // Add a channel
   const kind = body.kind as string | undefined;
-  const address = body.address as string | undefined;
-  if (!kind || !address) {
-    return errorResponse('kind and address are required', 400);
-  }
+  if (!kind) return errorResponse('kind is required', 400);
   if (!['email', 'telegram'].includes(kind)) {
     return errorResponse("kind must be 'email' or 'telegram' (others not yet dispatchable)", 400);
   }
-  if (kind === 'email' && !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(address)) {
+
+  // Telegram is a special case: only Telegram knows the chat_id, so there is
+  // no address to supply up front. We mint a one-time code, the owner sends
+  // it to the bot as `/start <code>`, and the webhook fills in the chat_id.
+  if (kind === 'telegram') {
+    const linkCode = randomToken(6);
+    const { data: pending, error: tgError } = await supabase
+      .from('notification_channels')
+      .insert({
+        owner_id: ownerId,
+        kind: 'telegram',
+        address: `pending:${linkCode}`,
+        verified_at: null,
+        verify_token: linkCode,
+        updated_at: new Date().toISOString(),
+      })
+      .select('channel_id')
+      .single();
+    if (tgError) {
+      console.error('[OACP] Telegram channel create error:', tgError);
+      return errorResponse('Failed to start Telegram linking', 500);
+    }
+    const botName = Deno.env.get('TELEGRAM_BOT_USERNAME') || 'LiteneenAlertsBot';
+    return jsonResponse({
+      channel: { channel_id: pending.channel_id, kind: 'telegram', verified_at: null },
+      link_code: linkCode,
+      bot_url: `https://t.me/${botName}?start=${linkCode}`,
+      instructions:
+        `Open the bot and send: /start ${linkCode} — the chat that sends this code becomes the linked one.`,
+    }, 201);
+  }
+
+  const address = body.address as string | undefined;
+  if (!address) return errorResponse('address is required', 400);
+  if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(address)) {
     return errorResponse('address must be a valid email', 400);
   }
 
@@ -2572,7 +2603,7 @@ async function handleNotificationChannels(req: Request): Promise<Response> {
     .select('email')
     .eq('owner_id', ownerId)
     .maybeSingle();
-  const preVerified = kind === 'email' && owner?.email &&
+  const preVerified = !!owner?.email &&
     (owner.email as string).toLowerCase() === address.toLowerCase();
 
   const verifyToken = preVerified ? null : randomToken(16);
@@ -2593,7 +2624,7 @@ async function handleNotificationChannels(req: Request): Promise<Response> {
     return errorResponse('Failed to add channel', 500);
   }
 
-  if (!preVerified && kind === 'email') {
+  if (!preVerified) {
     const link = `${DASHBOARD_URL}/?verify_channel=${verifyToken}`;
     await sendEmail(address, {
       subject: 'Confirm this address for Liteneen alerts',
@@ -2604,6 +2635,118 @@ async function handleNotificationChannels(req: Request): Promise<Response> {
   }
 
   return jsonResponse({ channel: inserted, verification_sent: !preVerified }, 201);
+}
+
+/**
+ * POST /notifications/telegram — Telegram Bot API webhook.
+ *
+ * Linking a Telegram chat needs the chat_id, and only Telegram can tell us
+ * that — so the owner opens the bot with a one-time code from the dashboard
+ * (`/start <code>`) and this endpoint binds that chat to their account. The
+ * code IS the proof of control, same shape as the emailed confirmation link.
+ *
+ * Public by necessity (Telegram calls it), so it is hardened by a secret path
+ * token: Telegram is told to call ?s=<TELEGRAM_WEBHOOK_SECRET> and anything
+ * without it is dropped before touching the database.
+ */
+async function handleTelegramWebhook(req: Request): Promise<Response> {
+  const url = new URL(req.url);
+  const expected = Deno.env.get('TELEGRAM_WEBHOOK_SECRET');
+  if (expected && url.searchParams.get('s') !== expected) {
+    return errorResponse('Not found', 404);
+  }
+
+  let update: Record<string, unknown>;
+  try {
+    update = await req.json();
+  } catch {
+    return jsonResponse({ ok: true }); // never make Telegram retry a bad body
+  }
+
+  const message = (update.message ?? update.edited_message) as
+    | Record<string, unknown>
+    | undefined;
+  const chat = message?.chat as Record<string, unknown> | undefined;
+  const chatId = chat?.id;
+  const text = typeof message?.text === 'string' ? (message.text as string) : '';
+  if (!chatId) return jsonResponse({ ok: true });
+
+  const botToken = Deno.env.get('TELEGRAM_BOT_TOKEN');
+  const reply = async (body: string) => {
+    if (!botToken) return;
+    await fetch(`https://api.telegram.org/bot${botToken}/sendMessage`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ chat_id: chatId, text: body, parse_mode: 'Markdown' }),
+    }).catch(() => {});
+  };
+
+  const startMatch = text.match(/^\/start(?:\s+(\S+))?/);
+  if (!startMatch) {
+    await reply(
+      'Send /start with the code from your Liteneen dashboard to link this chat, ' +
+      'or /stop to unlink it.',
+    );
+    return jsonResponse({ ok: true });
+  }
+
+  const supabase = getSupabaseAdmin();
+  const code = startMatch[1];
+
+  if (text.startsWith('/stop')) {
+    await supabase
+      .from('notification_channels')
+      .delete()
+      .eq('kind', 'telegram')
+      .eq('address', String(chatId));
+    await reply('Unlinked. This chat will no longer receive Liteneen alerts.');
+    return jsonResponse({ ok: true });
+  }
+
+  if (!code) {
+    await reply(
+      'To link this chat, open your Liteneen dashboard → Notifications, ' +
+      'add a Telegram channel, and send the code it gives you as `/start <code>`.',
+    );
+    return jsonResponse({ ok: true });
+  }
+
+  // The pending channel row carries the code; claiming it binds this chat.
+  const { data: pending } = await supabase
+    .from('notification_channels')
+    .select('channel_id, owner_id')
+    .eq('kind', 'telegram')
+    .eq('verify_token', code)
+    .is('verified_at', null)
+    .maybeSingle();
+
+  if (!pending) {
+    await reply('That code is not valid or has already been used. Generate a new one in the dashboard.');
+    return jsonResponse({ ok: true });
+  }
+
+  const { error } = await supabase
+    .from('notification_channels')
+    .update({
+      address: String(chatId),
+      verified_at: new Date().toISOString(),
+      verify_token: null,
+      updated_at: new Date().toISOString(),
+    })
+    .eq('channel_id', pending.channel_id);
+
+  if (error) {
+    console.error('[OACP] Telegram link failed:', error);
+    await reply('Something went wrong linking this chat. Try generating a new code.');
+    return jsonResponse({ ok: true });
+  }
+
+  console.log(`[OACP] Telegram chat ${chatId} linked to owner ${pending.owner_id}`);
+  await reply(
+    '✅ Linked. This chat will now get Liteneen alerts when one of your agents needs a decision — ' +
+    'like an unknown agent trying to reach it. Send /stop to unlink.',
+  );
+  return jsonResponse({ ok: true });
 }
 
 /** POST /notifications/verify — confirm a channel with its emailed token. */
@@ -3624,6 +3767,9 @@ const routes: Record<string, Record<string, RouteHandler>> = {
   },
   '/notifications/verify': {
     POST: (req) => handleNotificationVerify(req),
+  },
+  '/notifications/telegram': {
+    POST: (req) => handleTelegramWebhook(req),
   },
   '/balance': {
     GET: (req) => handleGetBalance(req),
