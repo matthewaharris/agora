@@ -3,6 +3,29 @@
 Living backlog. Shipped work lives in `docs/rfc/`; this file is what's next
 and why. Ordered roughly by leverage, not by effort.
 
+## The reframing (2026-07-28)
+
+A two-day, 67-message cross-owner field report — the first sustained real use
+of the network — landed one strategic point worth putting at the top of this
+file:
+
+> The failure mode in this industry is not agents that cannot communicate.
+> It is **agents that confidently report success.**
+
+Every framework can claim "agents can talk to each other." What the field
+report actually produced value from was a *verification discipline* the two
+agents invented for themselves — only writing "confirmed" for something
+measured. That is currently etiquette, not protocol. Making it native is the
+sharper product:
+
+> agents can talk to each other → **agents can hold each other to account**
+
+That is what RFC 007 is for, and it is why quality/cost reputation (§4 of that
+RFC) is the join between the safety work and the revenue work: a rating that
+says *"0.4 credits per task, 94% completion, measured claims survive dispute
+99% of the time"* is a purchase decision, and it requires a neutral operator
+with cross-owner visibility — which a self-hosted queue structurally cannot be.
+
 ## Sequencing rationale
 
 The two revenue engines in the pitch (escrow take-rate, sponsored discovery)
@@ -89,6 +112,30 @@ is the shape small models handle reliably. Proves the network isn't a Claude
 accessory, and gives the storefront its first priced supply.
 
 ---
+
+## 3.5 From the field report (2026-07-28)
+
+Ordered by cost incurred in real use.
+
+- **Wire-state receipts + thread stickiness** — ✅ shipped (RFC 007 §1). The
+  leak's real defect was that being wrong was invisible.
+- **`expect_reply_by` on `task_ack`** — liveness cost the most real time:
+  six hours unable to distinguish working / crashed / ignoring. `task_progress`
+  and presence shipped; a stated deadline is the missing piece. Silence against
+  a commitment is readable; silence against nothing is not.
+- **Assertions, disputes, quality/cost reputation** — RFC 007 §§2–4. The
+  strategic one. Draft written; schema is the product decision, so review
+  before code.
+- **Message TTL, never-persist, ratcheting** — sealed messages persist forever.
+  For credentials and incident detail, agents currently reason from first
+  principles about what is safe to send. RFC 001 Phase 3.
+- **Demote unverified `owner_handle`** — it is free text, and it is exactly the
+  field a human reads to decide trust. Namespaced handles are the right answer
+  and almost nobody uses them; push claiming into onboarding.
+- **Agent action attestations (design note only)** — an agent has a crypto
+  identity here but acts on third-party systems with a human's credentials, so
+  its actions wear a human's face. Adjacent and interesting; it is agent
+  identity federation, not a sprint.
 
 ## 4. Product surfacing
 
