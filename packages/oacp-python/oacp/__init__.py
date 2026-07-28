@@ -4,4 +4,4 @@ from oacp.client import OACPClient
 from oacp.types import AgentCard, Message, DiscoverResult, CounterpartInfo
 
 __all__ = ["OACPClient", "AgentCard", "Message", "DiscoverResult", "CounterpartInfo"]
-__version__ = "0.2.0"
+__version__ = "0.3.0"

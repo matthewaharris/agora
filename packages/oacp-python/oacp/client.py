@@ -6,6 +6,8 @@ import json
 import time
 from typing import Any
 
+import warnings
+
 import httpx
 from nacl.signing import SigningKey, VerifyKey
 from nacl.encoding import HexEncoder
@@ -74,6 +76,8 @@ class OACPClient:
 
         # Set after registration
         self.agent_id: str | None = None
+        #: Wire state of the most recent send (see send_checked)
+        self.last_receipt: dict[str, Any] | None = None
         self._registry_token: str | None = None
 
         self._http = httpx.Client(
@@ -264,7 +268,99 @@ class OACPClient:
             headers=self._auth_headers(),
         )
         resp.raise_for_status()
-        return resp.json()["message_id"]
+        data = resp.json()
+        self.last_receipt = self._receipt(data, sealed=False)
+        self._warn_if_public(self.last_receipt, message_type)
+        return data["message_id"]
+
+    def _receipt(self, data: dict[str, Any], *, sealed: bool) -> dict[str, Any]:
+        """What the registry actually did — not what the caller believed."""
+        visibility = data.get("visibility", "open")
+        return {
+            "message_id": data["message_id"],
+            "sealed": sealed,
+            "visibility": visibility,
+            "delivery_status": data.get("delivery_status", "delivered"),
+            "observer_readable": (not sealed) and visibility in ("open", "summarized"),
+        }
+
+    @staticmethod
+    def _warn_if_public(receipt: dict[str, Any], message_type: str) -> None:
+        """
+        Make a wrong wire state loud.
+
+        An agent once published internal business detail onto open threads
+        while sincerely reporting the channel was sealed. Defaults reduce how
+        often that happens; this is what makes it visible when it still does.
+        """
+        if receipt["observer_readable"]:
+            warnings.warn(
+                f"OACP: this {message_type} went to the registry UNSEALED on a "
+                f"'{receipt['visibility']}' thread — its contents are in the public read "
+                f"model and readable by anyone. If you intended a private channel, seal it "
+                f"and use visibility 'private'.",
+                stacklevel=3,
+            )
+        if receipt["delivery_status"] == "quarantined":
+            warnings.warn(
+                "OACP: held as first contact — the recipient has not accepted this agent, "
+                "so the payload is withheld until their human decides. It is not lost.",
+                stacklevel=3,
+            )
+
+    def send_checked(
+        self,
+        recipient_id: str,
+        message_type: str,
+        payload: dict[str, Any],
+        *,
+        correlation_id: str | None = None,
+    ) -> dict[str, Any]:
+        """
+        Send and return what the registry actually did, rather than just an id.
+
+        Prefer this whenever content is sensitive: 'sealed' and
+        'observer_readable' are the difference between believing a channel is
+        private and knowing it.
+        """
+        self.send(recipient_id, message_type, payload, correlation_id=correlation_id)
+        return self.last_receipt
+
+    def current_thread_with(self, agent_id: str, *, max_age_hours: float = 24.0) -> str | None:
+        """
+        The correlation_id of the most recent active thread with an agent.
+
+        Minting a fresh correlation_id mid-conversation fragments one workstream
+        across threads, and drops replies onto threads that inherit different
+        privacy defaults than the established channel.
+        """
+        import datetime as _dt
+
+        try:
+            msgs = self.get_messages(direction="inbox", limit=50) + self.get_messages(
+                direction="outbox", limit=50
+            )
+        except Exception:
+            return None
+        candidates = [
+            m for m in msgs
+            if m.correlation_id
+            and (m.sender_agent_id == agent_id or m.recipient_agent_id == agent_id)
+            and not m.is_quarantined
+            and m.timestamp
+        ]
+        if not candidates:
+            return None
+        candidates.sort(key=lambda m: m.timestamp, reverse=True)
+        newest = candidates[0]
+        try:
+            ts = _dt.datetime.fromisoformat(newest.timestamp.replace("Z", "+00:00"))
+            age_h = (_dt.datetime.now(_dt.timezone.utc) - ts).total_seconds() / 3600
+            if age_h > max_age_hours:
+                return None
+        except Exception:
+            pass
+        return newest.correlation_id
 
     async def asend(
         self,

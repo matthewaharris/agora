@@ -402,6 +402,14 @@ export function buildServer(): { server: McpServer; shutdown: () => Promise<void
         payload: z
           .record(z.unknown())
           .describe("Message payload, e.g. { action: 'summarize-text', task: 'Summarize …' }"),
+        new_topic: z
+          .boolean()
+          .optional()
+          .describe(
+            'Set true to deliberately start a NEW thread with this agent instead of continuing the existing one. ' +
+            'By default an ongoing conversation stays on its own correlation_id — fragmenting one workstream across ' +
+            'several threads loses context and can drop a reply onto a thread with different privacy defaults.',
+          ),
         correlation_id: z
           .string()
           .optional()
@@ -427,7 +435,7 @@ export function buildServer(): { server: McpServer; shutdown: () => Promise<void
           ),
       },
     },
-    async ({ recipient_agent_id, message_type, payload, correlation_id, seal, visibility, public_summary }) => {
+    async ({ recipient_agent_id, message_type, payload, correlation_id, seal, visibility, public_summary, new_topic }) => {
       try {
         const a = await requireRegistered();
         // Handle recipients (RFC 002): resolve @owner/agent to the card and
@@ -447,22 +455,52 @@ export function buildServer(): { server: McpServer; shutdown: () => Promise<void
           }
           recipient_agent_id = card.agent_id;
         }
-        // Every message gets a correlation_id so both sides can track the
-        // thread — generated here if the caller didn't supply one.
-        const threadId = correlation_id || crypto.randomUUID();
-        const messageId = await a.send(
+        // Thread stickiness: an existing conversation continues on its own
+        // correlation_id unless the caller deliberately starts a new topic.
+        // Minting a fresh id mid-conversation fragments one workstream across
+        // several threads, and a reply on a brand new thread inherits open
+        // defaults instead of the established channel's privacy.
+        let threadId = correlation_id;
+        let continuedThread = false;
+        if (!threadId && new_topic !== true) {
+          const existing = await a.currentThreadWith(recipient_agent_id);
+          if (existing) {
+            threadId = existing;
+            continuedThread = true;
+          }
+        }
+        threadId = threadId || crypto.randomUUID();
+
+        const receipt = await a.sendChecked(
           recipient_agent_id,
           message_type as MessageType,
           payload as Record<string, unknown>,
           { correlationId: threadId, seal, visibility, publicSummary: public_summary },
         );
+
+        // Report what the registry ACTUALLY did, never what was requested —
+        // an agent believing a channel was sealed while it wasn't is how
+        // internal detail reached the public read model once already.
         return jsonResult({
-          message_id: messageId,
+          message_id: receipt.message_id,
           correlation_id: threadId,
-          ...(seal ? { sealed: true } : {}),
-          ...(visibility ? { visibility } : {}),
+          sealed: receipt.sealed,
+          visibility: receipt.visibility,
+          delivery_status: receipt.delivery_status,
+          observer_readable: receipt.observer_readable,
+          ...(continuedThread ? { continued_existing_thread: true } : {}),
           note:
-            (seal ? 'Sent sealed — payload is end-to-end encrypted; the registry cannot read it. ' : '') +
+            (receipt.observer_readable
+              ? '⚠️ READABLE BY ANYONE: this went unsealed on an observer-visible thread, so its contents are in the public read model. Tell your human if that was not intended. '
+              : receipt.sealed
+                ? 'Sent sealed — end-to-end encrypted; the registry cannot read it. '
+                : 'Sent unsealed, but on a non-observable tier. ') +
+            (receipt.delivery_status === 'quarantined'
+              ? 'Held as first contact: the recipient has not accepted this agent yet, so their side will not see the payload until their human decides. It is not lost. '
+              : '') +
+            (continuedThread
+              ? 'Continued the existing thread with this agent rather than starting a new one. '
+              : '') +
             (message_type === 'task_request'
               ? `Call oacp_wait_for_reply with correlation_id "${threadId}" to wait for the response.`
               : 'Sent.'),

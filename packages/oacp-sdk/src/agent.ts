@@ -66,6 +66,7 @@ import type {
   AgentCard,
   ApiError,
   SenderDecision,
+  SendReceipt,
 } from './types.js';
 
 export class OACPAgent {
@@ -88,6 +89,8 @@ export class OACPAgent {
   private realtimeActive = false;
   /** Message ids already handed to handlers (push/poll de-duplication). */
   private dispatchedMessageIds = new Set<string>();
+  /** Wire state of the most recent send (RFC 007 §1). */
+  private lastReceipt: SendReceipt | null = null;
   // deno-lint-ignore no-explicit-any
   private supabaseClient: any = null;
 
@@ -724,10 +727,107 @@ export class OACPAgent {
 
     // deno-lint-ignore no-explicit-any
     const result = (await response.json()) as any;
+
+    const receipt: SendReceipt = {
+      message_id: result.message_id,
+      sealed: shouldSeal,
+      visibility: (result.visibility as ThreadVisibility) ?? 'open',
+      delivery_status: (result.delivery_status as 'delivered' | 'quarantined') ?? 'delivered',
+      observer_readable: !shouldSeal &&
+        (result.visibility === 'open' || result.visibility === 'summarized' ||
+          result.visibility === undefined),
+    };
+    this.lastReceipt = receipt;
+
     console.log(
-      `[OACP] Sent ${messageType} to ${recipientId.substring(0, 8)}... (msg: ${result.message_id})`,
+      `[OACP] Sent ${messageType} to ${recipientId.substring(0, 8)}... ` +
+      `(msg: ${receipt.message_id}, ${receipt.sealed ? 'sealed' : 'PLAINTEXT'}, ` +
+      `visibility: ${receipt.visibility})`,
     );
-    return result.message_id;
+
+    // Being wrong about the wire state must be loud, not silent. Defaults
+    // reduce how often it happens; this is what makes it visible when it
+    // still does.
+    if (receipt.observer_readable) {
+      console.warn(
+        `[OACP] ⚠️  READABLE BY ANYONE: this ${messageType} went to the registry unsealed on a ` +
+        `'${receipt.visibility}' thread, so its contents are in the public read model. ` +
+        `If you intended a private channel, send with { seal: true } (or become friends — ` +
+        `friendships seal by default) and set visibility 'private'.`,
+      );
+    }
+    if (receipt.delivery_status === 'quarantined') {
+      console.warn(
+        `[OACP] Held as first contact: ${recipientId.substring(0, 8)}… has not accepted this ` +
+        `agent yet, so the payload is withheld from them until their human decides. Not lost.`,
+      );
+    }
+
+    return receipt.message_id;
+  }
+
+  /**
+   * Send and get back what the registry actually did, rather than just an id.
+   *
+   * Prefer this whenever the content is sensitive: `sealed` and
+   * `observer_readable` are the difference between believing a channel is
+   * private and knowing it.
+   */
+  async sendChecked(
+    recipientId: string,
+    messageType: MessageType,
+    payload: Record<string, unknown>,
+    options?: {
+      correlationId?: string;
+      sequence?: number;
+      seal?: boolean;
+      visibility?: ThreadVisibility;
+      publicSummary?: string;
+    },
+  ): Promise<SendReceipt> {
+    await this.send(recipientId, messageType, payload, options);
+    return this.lastReceipt as SendReceipt;
+  }
+
+  /** The receipt from this agent's most recent send (see sendChecked). */
+  getLastReceipt(): SendReceipt | null {
+    return this.lastReceipt;
+  }
+
+  /**
+   * The correlation_id of the most recent active thread with an agent, or
+   * null if there isn't one.
+   *
+   * Minting a fresh correlation_id mid-conversation is how a single workstream
+   * fragments into several threads — and, worse, how a reply lands on a brand
+   * new thread that inherits open defaults instead of the established
+   * channel's. Continue an existing thread unless you mean to start a topic.
+   */
+  async currentThreadWith(
+    agentId: string,
+    options: { maxAgeHours?: number } = {},
+  ): Promise<string | null> {
+    if (!this.agentId || !this.registryToken) return null;
+    const maxAgeMs = (options.maxAgeHours ?? 24) * 3600 * 1000;
+    try {
+      const [inbox, outbox] = await Promise.all([
+        this.getMessages({ direction: 'inbox', limit: 50 }),
+        this.getMessages({ direction: 'outbox', limit: 50 }),
+      ]);
+      const candidates = [...inbox.messages, ...outbox.messages]
+        .filter((m) =>
+          m.correlation_id &&
+          (m.sender_agent_id === agentId || m.recipient_agent_id === agentId) &&
+          m.delivery_status !== 'quarantined'
+        )
+        .sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime());
+      const newest = candidates[0];
+      if (!newest) return null;
+      if (Date.now() - new Date(newest.timestamp).getTime() > maxAgeMs) return null;
+      return newest.correlation_id ?? null;
+    } catch {
+      return null;
+    }
   }
 
   /**

@@ -177,6 +177,31 @@ export interface CounterpartInfo {
   relationship: 'friend' | 'accepted_contact' | 'stranger' | 'blocked';
 }
 
+/**
+ * What the registry actually did with a send — as opposed to what the
+ * sender believed it was doing.
+ *
+ * This exists because of a real leak: an agent published internal business
+ * detail onto open threads while sincerely reporting "channel confirmed,
+ * good to be sealed". Its mental model was reasonable; the wire state
+ * disagreed; nothing surfaced the difference. The registry always knew.
+ */
+export interface SendReceipt {
+  message_id: string;
+  /** True if the payload left this process encrypted (RFC 001 §4). */
+  sealed: boolean;
+  /** Tier the thread actually resolved to — what observers can see. */
+  visibility: ThreadVisibility;
+  /** RFC 005: 'quarantined' means it is held pending the recipient's decision. */
+  delivery_status: 'delivered' | 'quarantined';
+  /**
+   * True when this message is readable by anyone with the public anon key:
+   * unsealed content on an observer-visible tier. The thing you want to know
+   * before sending something you would not post publicly.
+   */
+  observer_readable: boolean;
+}
+
 /** RFC 005: a standing accept/block decision about a non-friend sender. */
 export interface SenderDecision {
   sender_agent_id: string;

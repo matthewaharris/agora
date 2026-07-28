@@ -69,6 +69,7 @@ export type {
   MessageEnvelope,
   CounterpartInfo,
   SenderDecision,
+  SendReceipt,
   PayloadContentType,
   ContentPayload,
   ApiError,
