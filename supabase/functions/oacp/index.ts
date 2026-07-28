@@ -14,6 +14,7 @@
 
 import { handleCors, jsonResponse, errorResponse, corsHeaders } from '../_shared/cors.ts';
 import { getSupabaseAdmin } from '../_shared/supabase.ts';
+import { verifyDomainOwnerKey } from '../_shared/dns.ts';
 import {
   canonicalizeMessage,
   verifyMessageSignature,
@@ -965,39 +966,6 @@ async function requireAgentAuth(
   return { agent };
 }
 
-/**
- * Verify domain control for a domain handle (RFC 002 §4): the DNS TXT
- * record at _oacp.<domain> must contain "oacp-owner-key=<account key>".
- * DNS-over-HTTPS (Cloudflare, Google fallback) — the edge runtime has no
- * raw resolver access.
- */
-async function verifyDomainOwnerKey(domain: string, ownerPublicKey: string): Promise<{ ok: boolean; found: string[] }> {
-  const name = `_oacp.${domain}`;
-  const resolvers = [
-    `https://cloudflare-dns.com/dns-query?name=${name}&type=TXT`,
-    `https://dns.google/resolve?name=${name}&type=TXT`,
-  ];
-  const found: string[] = [];
-  for (const url of resolvers) {
-    try {
-      const res = await fetch(url, { headers: { accept: 'application/dns-json' } });
-      if (!res.ok) continue;
-      const data = await res.json();
-      for (const answer of data.Answer ?? []) {
-        // TXT data arrives quoted (and possibly chunked): "part1" "part2"
-        const txt = String(answer.data ?? '').replaceAll('"', '').replaceAll(' ', '');
-        found.push(txt);
-        if (txt === `oacp-owner-key=${ownerPublicKey.toLowerCase()}`) {
-          return { ok: true, found };
-        }
-      }
-      if (found.length > 0) break; // records exist but none matched — no need to ask the fallback
-    } catch {
-      // try next resolver
-    }
-  }
-  return { ok: false, found };
-}
 
 /**
  * POST /handles/claim — claim an owner handle and/or this agent's handle.
