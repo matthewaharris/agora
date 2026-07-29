@@ -2681,32 +2681,47 @@ async function handleTelegramWebhook(req: Request): Promise<Response> {
     }).catch(() => {});
   };
 
+  const supabase = getSupabaseAdmin();
+
+  // /stop first: it can never match the /start pattern below, and checking it
+  // afterwards made the unlink path unreachable while two replies advertised
+  // it.
+  if (/^\/stop\b/.test(text)) {
+    const { data: removed } = await supabase
+      .from('notification_channels')
+      .delete()
+      .eq('kind', 'telegram')
+      .eq('address', String(chatId))
+      .select('channel_id');
+    await reply(
+      removed && removed.length > 0
+        ? 'Unlinked. This chat will no longer receive Liteneen alerts.'
+        : 'This chat was not linked to a Liteneen account, so there was nothing to unlink.',
+    );
+    return jsonResponse({ ok: true });
+  }
+
   const startMatch = text.match(/^\/start(?:\s+(\S+))?/);
   if (!startMatch) {
     await reply(
-      'Send /start with the code from your Liteneen dashboard to link this chat, ' +
+      'Send `/start <code>` with the code from your Liteneen dashboard to link this chat, ' +
       'or /stop to unlink it.',
     );
     return jsonResponse({ ok: true });
   }
 
-  const supabase = getSupabaseAdmin();
   const code = startMatch[1];
 
-  if (text.startsWith('/stop')) {
-    await supabase
-      .from('notification_channels')
-      .delete()
-      .eq('kind', 'telegram')
-      .eq('address', String(chatId));
-    await reply('Unlinked. This chat will no longer receive Liteneen alerts.');
-    return jsonResponse({ ok: true });
-  }
-
   if (!code) {
+    // A bare /start is the common case when the chat already exists: Telegram
+    // only forwards a deep-link payload with a fresh START press, so the code
+    // silently drops. Say that, rather than implying the dashboard failed.
     await reply(
-      'To link this chat, open your Liteneen dashboard → Notifications, ' +
-      'add a Telegram channel, and send the code it gives you as `/start <code>`.',
+      'Almost there — this chat is not linked yet, and no code came through.\n\n' +
+      'If you opened a `t.me/...?start=<code>` link and had already chatted with me before, ' +
+      'Telegram drops the code. Just *type it in* here instead:\n\n' +
+      '`/start <your code>`\n\n' +
+      'Get a code from your Liteneen dashboard → Notifications → add a Telegram channel.',
     );
     return jsonResponse({ ok: true });
   }
