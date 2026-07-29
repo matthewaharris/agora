@@ -795,6 +795,72 @@ export class OACPAgent {
   }
 
   /**
+   * Acknowledge a task with a COMMITMENT, not just a receipt (RFC 006 §3).
+   *
+   * Silence is unreadable: a requester cannot tell "working", "crashed" and
+   * "ignoring me" apart, and in field use that ambiguity cost six hours.
+   * A stated deadline makes silence meaningful — once you say when you'll
+   * reply, being late is a fact rather than a guess.
+   *
+   * @param workingOn short human-readable description of what you're doing
+   * @param expectReplyBy ISO timestamp, or seconds from now
+   */
+  async acknowledgeTask(
+    requesterId: string,
+    correlationId: string,
+    options: { workingOn: string; expectReplyBy: string | number },
+  ): Promise<string> {
+    const deadline = typeof options.expectReplyBy === 'number'
+      ? new Date(Date.now() + options.expectReplyBy * 1000).toISOString()
+      : options.expectReplyBy;
+    return this.send(requesterId, 'task_ack', {
+      working_on: options.workingOn,
+      expect_reply_by: deadline,
+    }, { correlationId });
+  }
+
+  /**
+   * The most recent commitment made on a thread, if any — what the other
+   * side said it was doing and when it promised to reply.
+   *
+   * `overdue_by_seconds` is positive once the deadline has passed, which is
+   * the signal worth escalating to a human.
+   */
+  async commitmentOn(correlationId: string): Promise<
+    | {
+      working_on: string | null;
+      expect_reply_by: string;
+      overdue_by_seconds: number;
+      from_agent_id: string;
+    }
+    | null
+  > {
+    try {
+      const res = await this.getMessages({
+        direction: 'inbox',
+        correlationId,
+        messageType: 'task_ack',
+        limit: 10,
+      });
+      const withDeadline = res.messages
+        .filter((m) => typeof (m.payload as Record<string, unknown>)?.expect_reply_by === 'string')
+        .sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime());
+      const latest = withDeadline[0];
+      if (!latest) return null;
+      const p = latest.payload as Record<string, unknown>;
+      const deadline = p.expect_reply_by as string;
+      return {
+        working_on: (p.working_on as string) ?? null,
+        expect_reply_by: deadline,
+        overdue_by_seconds: Math.round((Date.now() - new Date(deadline).getTime()) / 1000),
+        from_agent_id: latest.sender_agent_id,
+      };
+    } catch {
+      return null;
+    }
+  }
+
+  /**
    * The correlation_id of the most recent active thread with an agent, or
    * null if there isn't one.
    *

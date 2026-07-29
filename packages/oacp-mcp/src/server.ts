@@ -512,6 +512,63 @@ export function buildServer(): { server: McpServer; shutdown: () => Promise<void
   );
 
   // ----------------------------------------------------------
+  // oacp_acknowledge (RFC 006 §3)
+  // ----------------------------------------------------------
+  server.registerTool(
+    'oacp_acknowledge',
+    {
+      title: 'Acknowledge a task with a reply-by commitment',
+      description:
+        'Tell the requester you picked up their task AND when you will reply. Use this immediately for anything ' +
+        'that will take more than a minute — a requester cannot tell "working", "crashed" and "ignoring you" apart, ' +
+        'and that ambiguity is the single most expensive failure in real use. ' +
+        'A stated deadline makes silence meaningful: being late becomes a fact instead of a guess. ' +
+        'Send interim task_progress on the same correlation_id if the work runs long, and revise the commitment if it slips.',
+      inputSchema: {
+        requester_agent_id: z.string().describe('Who sent the task_request (agent_id or @handle)'),
+        correlation_id: z.string().describe("The task's correlation_id — the same thread"),
+        working_on: z
+          .string()
+          .describe('Short human-readable summary of what you are doing, e.g. "running the migration audit"'),
+        expect_reply_by_seconds: z
+          .number()
+          .int()
+          .min(30)
+          .max(604800)
+          .describe('How long you expect to need, in seconds. Be honest — an overshoot is reported as overdue.'),
+      },
+    },
+    async ({ requester_agent_id, correlation_id, working_on, expect_reply_by_seconds }) => {
+      try {
+        const a = await requireRegistered();
+        let target = requester_agent_id;
+        if (target.startsWith('@')) {
+          const resolved = await a.resolveHandle(target);
+          if (!resolved.agent?.agent_id) {
+            return errorResult(`Handle ${target} did not resolve to a single agent`);
+          }
+          target = resolved.agent.agent_id as string;
+        }
+        const messageId = await a.acknowledgeTask(target, correlation_id, {
+          workingOn: working_on,
+          expectReplyBy: expect_reply_by_seconds,
+        });
+        const deadline = new Date(Date.now() + expect_reply_by_seconds * 1000).toISOString();
+        return jsonResult({
+          message_id: messageId,
+          correlation_id,
+          expect_reply_by: deadline,
+          note:
+            `Committed to reply by ${deadline}. Their side can now tell waiting from silence — ` +
+            'if you will miss it, send another acknowledgement with a revised time rather than going quiet.',
+        });
+      } catch (err) {
+        return errorResult(err instanceof Error ? err.message : String(err));
+      }
+    },
+  );
+
+  // ----------------------------------------------------------
   // oacp_check_inbox
   // ----------------------------------------------------------
   server.registerTool(
@@ -652,6 +709,28 @@ export function buildServer(): { server: McpServer; shutdown: () => Promise<void
           } catch {
             // Presence is a nicety — never fail the wait because of it.
           }
+        }
+
+        // RFC 006 §3: a stated deadline beats presence. If the counterparty
+        // committed to a reply time, whether it is late is a fact — report
+        // that instead of inferring from silence.
+        const commitment = correlation_id ? await a.commitmentOn(correlation_id) : null;
+        if (commitment) {
+          const overdue = commitment.overdue_by_seconds > 0;
+          const mins = Math.round(Math.abs(commitment.overdue_by_seconds) / 60);
+          return jsonResult({
+            timed_out: true,
+            waited_seconds: timeout_seconds,
+            ...(presence ? { presence } : {}),
+            commitment,
+            note: overdue
+              ? `They committed to reply by ${commitment.expect_reply_by} and are now ~${mins} min OVERDUE` +
+                (commitment.working_on ? ` (was working on: ${commitment.working_on})` : '') +
+                '. That is worth telling your human — it is a broken commitment, not just silence.'
+              : `They acknowledged and committed to reply by ${commitment.expect_reply_by} (~${mins} min away)` +
+                (commitment.working_on ? `, working on: ${commitment.working_on}` : '') +
+                '. Not late yet — wait rather than re-sending.',
+          });
         }
 
         const offline = presence && presence.status !== 'online';
