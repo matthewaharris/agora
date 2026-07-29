@@ -48,6 +48,53 @@ const TERMS_NOTICE =
   'use private/secret visibility and sealed payloads for anything sensitive.';
 const legalFields = () =>
   LEGAL_LIVE ? { terms_url: TERMS_URL, privacy_url: PRIVACY_URL, terms_notice: TERMS_NOTICE } : {};
+
+// RFC 001 §6: entitlement enforcement switch. OFF during beta — everyone
+// keeps everything, and the check below short-circuits to allowed. When it
+// goes live, only EXPLICITLY-requested advanced tiers are gated (currently
+// 'secret'): friend-channel privacy (RFC 004 private+sealed defaults) is a
+// safety property and stays free — "advanced privacy features on the hosted
+// registry", never "pay or be watched".
+const ENTITLEMENTS_ENFORCED = Deno.env.get('OACP_ENTITLEMENTS_ENFORCED') === 'true';
+
+/**
+ * Is this agent entitled to a gated feature? Grants attach to the agent's
+ * owner (account-level) or to the agent itself. Fails CLOSED when enforced:
+ * a lookup error denies rather than silently granting a paid tier.
+ */
+async function checkEntitlement(agentId: string, feature: string): Promise<boolean> {
+  if (!ENTITLEMENTS_ENFORCED) return true;
+  try {
+    const supabase = getSupabaseAdmin();
+    const { data: agent } = await supabase
+      .from('agents')
+      .select('owner_id')
+      .eq('agent_id', agentId)
+      .maybeSingle();
+    const subjects = [`and(subject_type.eq.agent,subject_id.eq.${agentId})`];
+    if (agent?.owner_id) subjects.push(`and(subject_type.eq.owner,subject_id.eq.${agent.owner_id})`);
+    const { data, error } = await supabase
+      .from('entitlements')
+      .select('entitlement_id, expires_at')
+      .eq('feature', feature)
+      .or(subjects.join(','))
+      .limit(10);
+    if (error) return false;
+    const now = Date.now();
+    return (data ?? []).some((row) => !row.expires_at || Date.parse(row.expires_at as string) > now);
+  } catch {
+    return false;
+  }
+}
+
+const entitlementDenied = (feature: string) =>
+  errorResponse(
+    `The '${feature}' feature is not enabled for this account on the hosted registry. ` +
+    'Friend-channel privacy (private visibility, sealed payloads) is always free; this gates an advanced tier. ' +
+    'Contact the registry operator for access, or self-host — the protocol never paywalls privacy.',
+    403,
+    { error_code: 'entitlement_required', feature },
+  );
 const DEFAULT_PAGE_SIZE = 20;
 const MAX_PAGE_SIZE = 100;
 
@@ -1771,6 +1818,16 @@ async function handleMessageSend(req: Request): Promise<Response> {
         400,
         { error_code: 'seal_visibility_conflict', visibility: threadVisibility },
       );
+    }
+
+    // RFC 001 §6: 'secret' is the gated advanced tier (no-op while
+    // enforcement is off). Checked only at thread CREATION — an existing
+    // secret thread keeps working; entitlement expiry must not force a
+    // conversation into the clear mid-flight.
+    if (!threadState && threadVisibility === 'secret') {
+      if (!(await checkEntitlement(senderAgentId, 'visibility.secret'))) {
+        return entitlementDenied('visibility.secret');
+      }
     }
 
     if (!threadState && (threadVisibility !== 'open' || requestedSummary !== undefined)) {
@@ -3688,6 +3745,14 @@ async function handleThreadUpdate(req: Request): Promise<Response> {
       403,
       { error_code: 'visibility_downgrade', current: currentVisibility, requested: newVisibility },
     );
+  }
+
+  // RFC 001 §6: upgrading INTO 'secret' is the gated advanced tier (no-op
+  // while enforcement is off). Already-secret threads pass untouched.
+  if (newVisibility === 'secret' && currentVisibility !== 'secret') {
+    if (!(await checkEntitlement(agentId, 'visibility.secret'))) {
+      return entitlementDenied('visibility.secret');
+    }
   }
 
   // public_summary only exists on observer-visible tiers; upgrades clear it
