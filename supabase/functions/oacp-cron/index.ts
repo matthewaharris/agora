@@ -116,6 +116,18 @@ Deno.serve(async (req: Request) => {
       console.log(`[OACP-CRON] Marked ${affected} agent(s) offline`);
     }
 
+    // RFC 001 §5: destroy payloads past their TTL or already read. Cheap
+    // (two indexed UPDATEs), so it runs on every sweep rather than waiting
+    // for a daily job — a burn-after-read payload lingering for hours would
+    // defeat the point of asking for it.
+    const { data: reaped } = await supabase.rpc('oacp_reap_expired_payloads');
+    const reapResult = reaped as Record<string, number> | null;
+    if (reapResult && (reapResult.expired > 0 || reapResult.burned > 0)) {
+      console.log(
+        `[OACP-CRON] Reaped payloads — expired: ${reapResult.expired}, burned: ${reapResult.burned}`,
+      );
+    }
+
     // Domain re-verification is far less urgent than offline detection, so
     // it only runs when explicitly asked (?domains=1) or on a daily cron —
     // the offline sweep runs every 30s and must stay cheap.
@@ -127,6 +139,7 @@ Deno.serve(async (req: Request) => {
     return jsonResponse({
       status: 'ok',
       agents_marked_offline: affected,
+      ...(reapResult ? { reaped: reapResult } : {}),
       ...(domains ? { domain_recheck: domains } : {}),
       timestamp: new Date().toISOString(),
     });

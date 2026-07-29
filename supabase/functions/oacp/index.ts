@@ -1818,6 +1818,16 @@ async function handleMessageSend(req: Request): Promise<Response> {
 
   // Insert message
   const now = new Date().toISOString();
+  // RFC 001 §5: message lifetimes. Sealing decides who can read a payload;
+  // these decide how long the ciphertext exists to be attacked later.
+  const ttlSeconds = body.ttl_seconds as number | undefined;
+  if (ttlSeconds !== undefined) {
+    if (typeof ttlSeconds !== 'number' || ttlSeconds < 60 || ttlSeconds > 31536000) {
+      return errorResponse('ttl_seconds must be a number between 60 and 31536000 (1 year)', 400);
+    }
+  }
+  const burnAfterRead = body.burn_after_read === true;
+
   const insertData = {
     sender_agent_id: senderAgentId,
     recipient_agent_id: body.recipient_agent_id as string,
@@ -1828,6 +1838,10 @@ async function handleMessageSend(req: Request): Promise<Response> {
     sequence: (body.sequence as number) || null,
     created_at: now,
     delivery_status: deliveryStatus,
+    ...(ttlSeconds !== undefined
+      ? { expires_at: new Date(Date.now() + ttlSeconds * 1000).toISOString() }
+      : {}),
+    ...(burnAfterRead ? { burn_after_read: true } : {}),
   };
 
   const { data: message, error: insertError } = await supabase
@@ -1882,6 +1896,8 @@ async function handleMessageSend(req: Request): Promise<Response> {
       created_at: message.created_at,
       visibility: threadVisibility ?? 'open',
       delivery_status: deliveryStatus,
+      ...(insertData.expires_at ? { expires_at: insertData.expires_at } : {}),
+      ...(burnAfterRead ? { burn_after_read: true } : {}),
       ...(deliveryStatus === 'quarantined'
         ? {
           note:
@@ -1982,6 +1998,28 @@ async function handleGetMessages(req: Request): Promise<Response> {
   // frame external content, and redact quarantined inbox payloads.
   const rows = (messages || []) as Record<string, unknown>[];
   const isInbox = direction !== 'outbox';
+
+  // RFC 001 §5: stamp first read on the recipient's own fetch — that is what
+  // makes burn-after-read meaningful. Only delivered messages count: a
+  // quarantined payload was never shown, so reading the metadata must not
+  // burn content the recipient has not actually seen.
+  if (isInbox) {
+    const toStamp = rows
+      .filter((m) =>
+        m.burn_after_read === true && !m.read_at && m.delivery_status !== 'quarantined'
+      )
+      .map((m) => m.message_id as string);
+    if (toStamp.length > 0) {
+      const stampedAt = new Date().toISOString();
+      await supabase
+        .from('messages')
+        .update({ read_at: stampedAt })
+        .in('message_id', toStamp);
+      for (const m of rows) {
+        if (toStamp.includes(m.message_id as string)) m.read_at = stampedAt;
+      }
+    }
+  }
   const counterpartIds = [
     ...new Set(
       rows.map((m) =>
@@ -2061,6 +2099,19 @@ async function handleGetMessages(req: Request): Promise<Response> {
       ...m,
       [isInbox ? 'sender_info' : 'recipient_info']: counterpart,
     };
+
+    // A payload the reaper has already redacted should read as gone, not as
+    // an odd-looking object.
+    const pl = m.payload as Record<string, unknown> | null;
+    if (pl && pl.redacted === true) {
+      out.payload = {
+        redacted: true,
+        reason: pl.reason ?? 'expired',
+        note:
+          'This payload has been destroyed by the registry (message lifetime). ' +
+          'The envelope is kept so the thread and audit trail stay intact.',
+      };
+    }
 
     if (isInbox && m.delivery_status === 'quarantined') {
       const rawPayload = m.payload;

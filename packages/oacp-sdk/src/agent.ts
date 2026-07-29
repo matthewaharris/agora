@@ -641,6 +641,14 @@ export class OACPAgent {
       seal?: boolean;
       visibility?: ThreadVisibility;
       publicSummary?: string;
+      /**
+       * RFC 001 §5: destroy this payload after N seconds (60 … 1 year).
+       * Sealing decides who can read it; this decides how long it exists to
+       * be attacked later. Use for credentials and incident detail.
+       */
+      ttlSeconds?: number;
+      /** RFC 001 §5: destroy the payload once the recipient has fetched it. */
+      burnAfterRead?: boolean;
     },
   ): Promise<string> {
     if (!this.agentId || !this.registryToken) {
@@ -710,6 +718,8 @@ export class OACPAgent {
     if (sequence !== undefined) body.sequence = sequence;
     if (options?.visibility) body.visibility = options.visibility;
     if (options?.publicSummary !== undefined) body.public_summary = options.publicSummary;
+    if (options?.ttlSeconds !== undefined) body.ttl_seconds = options.ttlSeconds;
+    if (options?.burnAfterRead) body.burn_after_read = true;
 
     const response = await fetch(`${this.apiBaseUrl}/messages/send`, {
       method: 'POST',
@@ -736,6 +746,8 @@ export class OACPAgent {
       observer_readable: !shouldSeal &&
         (result.visibility === 'open' || result.visibility === 'summarized' ||
           result.visibility === undefined),
+      ...(result.expires_at ? { expires_at: result.expires_at as string } : {}),
+      ...(result.burn_after_read ? { burn_after_read: true } : {}),
     };
     this.lastReceipt = receipt;
 
@@ -783,6 +795,14 @@ export class OACPAgent {
       seal?: boolean;
       visibility?: ThreadVisibility;
       publicSummary?: string;
+      /**
+       * RFC 001 §5: destroy this payload after N seconds (60 … 1 year).
+       * Sealing decides who can read it; this decides how long it exists to
+       * be attacked later. Use for credentials and incident detail.
+       */
+      ttlSeconds?: number;
+      /** RFC 001 §5: destroy the payload once the recipient has fetched it. */
+      burnAfterRead?: boolean;
     },
   ): Promise<SendReceipt> {
     await this.send(recipientId, messageType, payload, options);

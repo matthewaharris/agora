@@ -156,6 +156,10 @@ export interface MessageEnvelope {
    * registry withholds the payload until the recipient accepts the contact.
    */
   delivery_status?: 'delivered' | 'quarantined';
+  /** RFC 001 §5: when this payload will be destroyed, if a TTL was set. */
+  expires_at?: string | null;
+  /** RFC 001 §5: payload is destroyed after the recipient's first fetch. */
+  burn_after_read?: boolean;
   /** RFC 005: registry-attested provenance of the counterpart (inbox). */
   sender_info?: CounterpartInfo;
   /** RFC 005: registry-attested provenance of the counterpart (outbox). */
@@ -200,6 +204,10 @@ export interface SendReceipt {
    * before sending something you would not post publicly.
    */
   observer_readable: boolean;
+  /** RFC 001 §5: when the registry will destroy this payload, if a TTL was set. */
+  expires_at?: string;
+  /** RFC 001 §5: payload is destroyed once the recipient fetches it. */
+  burn_after_read?: boolean;
 }
 
 /** RFC 005: a standing accept/block decision about a non-friend sender. */
