@@ -23,7 +23,7 @@
  * ```
  */
 
-export const VERSION = '0.10.0';
+export const VERSION = '0.16.0';
 
 // Main agent class
 export { OACPAgent } from './agent.js';
@@ -85,6 +85,23 @@ export {
   type SealedPayload,
   type SealReader,
 } from './seal.js';
+
+// Blinded mailboxes (RFC 001 §5.1, oacp/v2-draft)
+export {
+  mailboxKeyFor,
+  mailboxEpoch,
+  mailboxTag,
+  signInner,
+  verifyInner,
+  encryptMailboxBlob,
+  decryptMailboxBlob,
+  MAILBOX_ALG,
+  MAILBOX_VERSION,
+  MAILBOX_EPOCH_SECONDS,
+  type MailboxBlob,
+  type BlindedInner,
+  type BlindedMessage,
+} from './mailbox.js';
 
 // Contacts & friendships (RFC 002 §3)
 export {

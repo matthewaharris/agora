@@ -128,6 +128,15 @@ Deno.serve(async (req: Request) => {
       );
     }
 
+    // RFC 001 §5.1: expired blinded-mailbox items are DELETED, not redacted —
+    // those rows carry no envelope worth keeping, and the design goal is
+    // that the data at rest tells no story.
+    const { data: mailboxReaped } = await supabase.rpc('oacp_reap_mailbox');
+    const mailboxDeleted = (mailboxReaped as number | null) ?? 0;
+    if (mailboxDeleted > 0) {
+      console.log(`[OACP-CRON] Deleted ${mailboxDeleted} expired mailbox item(s)`);
+    }
+
     // Domain re-verification is far less urgent than offline detection, so
     // it only runs when explicitly asked (?domains=1) or on a daily cron —
     // the offline sweep runs every 30s and must stay cheap.
@@ -140,6 +149,7 @@ Deno.serve(async (req: Request) => {
       status: 'ok',
       agents_marked_offline: affected,
       ...(reapResult ? { reaped: reapResult } : {}),
+      ...(mailboxDeleted > 0 ? { mailbox_deleted: mailboxDeleted } : {}),
       ...(domains ? { domain_recheck: domains } : {}),
       timestamp: new Date().toISOString(),
     });

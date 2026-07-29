@@ -54,6 +54,17 @@ import {
   loadContacts,
   type Contact,
 } from './contacts.js';
+import {
+  mailboxKeyFor,
+  mailboxEpoch,
+  mailboxTag,
+  signInner,
+  verifyInner,
+  encryptMailboxBlob,
+  decryptMailboxBlob,
+  type BlindedInner,
+  type BlindedMessage,
+} from './mailbox.js';
 import type {
   RegisterResponse,
   ReregisterResponse,
@@ -812,6 +823,166 @@ export class OACPAgent {
   /** The receipt from this agent's most recent send (see sendChecked). */
   getLastReceipt(): SendReceipt | null {
     return this.lastReceipt;
+  }
+
+  /**
+   * Send through a blinded mailbox (RFC 001 §5.1): the registry stores an
+   * opaque blob addressed to a rotating pseudonymous tag, and its own tables
+   * cannot link sender to recipient. The deepest privacy tier.
+   *
+   * Requires a PINNED contact (RFC 002): the registry substituting a card
+   * key is exactly this feature's adversary, so trust-on-first-use at send
+   * time would hand it the mailbox. Add the recipient as a friend first.
+   *
+   * What the recipient's registry sees: "someone deposited to tag X". What
+   * it cannot see: who, to whom, or what. Note the honest limits — thread
+   * control/kill switch cannot apply, and IP/timing traffic analysis is out
+   * of scope (RFC 001 §5.1).
+   */
+  async sendBlinded(
+    recipientId: string,
+    messageType: MessageType,
+    payload: Record<string, unknown>,
+    options?: {
+      correlationId?: string;
+      /** Item lifetime, 60 … 604800 s (7 days, the default and maximum). */
+      ttlSeconds?: number;
+    },
+  ): Promise<{ tag: string; item_id: string; deposited_at: string; expires_at: string }> {
+    if (!this.agentId || !this.registryToken) {
+      throw new Error('[OACP] Agent must be registered before sending');
+    }
+    const contact = getContact(this.contactsPath, recipientId);
+    if (!contact) {
+      throw new Error(
+        `[OACP] Blinded send requires a pinned contact for ${recipientId} — ` +
+        'add them as a friend first (RFC 002). Fetching their key from the registry ' +
+        'at send time would let the registry substitute it.',
+      );
+    }
+
+    const key = mailboxKeyFor(this.keypair, contact.public_key);
+    const unsigned: Omit<BlindedInner, 'sig'> = {
+      sender_agent_id: this.agentId,
+      message_type: messageType,
+      payload,
+      ...(options?.correlationId ? { correlation_id: options.correlationId } : {}),
+      ts: new Date().toISOString(),
+    };
+    const inner: BlindedInner = { ...unsigned, sig: signInner(unsigned, this.keypair.secretKey) };
+    const blob = encryptMailboxBlob(key, inner);
+    const tag = mailboxTag(key, mailboxEpoch());
+
+    // Deliberately NO Authorization header: a bearer token on the deposit
+    // would link it to this account at the HTTP layer and undo the blinding.
+    const response = await fetch(`${this.apiBaseUrl}/mailbox/deposit`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        tag,
+        blob,
+        ...(options?.ttlSeconds !== undefined ? { ttl_seconds: options.ttlSeconds } : {}),
+      }),
+    });
+    if (!response.ok) {
+      const error = (await response.json()) as ApiError;
+      throw new Error(`Blinded deposit failed (${response.status}): ${error.error}`);
+    }
+    // deno-lint-ignore no-explicit-any
+    const result = (await response.json()) as any;
+    return {
+      tag,
+      item_id: result.item_id as string,
+      deposited_at: result.deposited_at as string,
+      expires_at: result.expires_at as string,
+    };
+  }
+
+  /**
+   * Poll blinded mailboxes for messages from pinned contacts.
+   *
+   * Derives the pair tag for each peer for the current epoch plus
+   * `lookbackEpochs` previous ones (default 1 — covers a poll gap of up to
+   * six hours; raise it after longer offline periods, one epoch per 6h).
+   * Blobs that fail to decrypt for a derived pair are skipped silently —
+   * that is the normal case when polling several peers whose traffic shares
+   * a fetch. Messages whose inner signature does not verify against the
+   * PINNED key, or whose claimed sender is not the pair's peer, are dropped
+   * with a warning: only the pair can derive the key, so either indicates
+   * tampering or a peer lying about its identity.
+   */
+  async checkBlindedMailbox(options?: {
+    /** Restrict to these peer agent ids (default: all pinned contacts). */
+    peers?: string[];
+    lookbackEpochs?: number;
+    /** Only items deposited after this ISO timestamp. */
+    since?: string;
+  }): Promise<BlindedMessage[]> {
+    if (!this.agentId) {
+      throw new Error('[OACP] Agent must be registered before checking mailboxes');
+    }
+    const contacts = loadContacts(this.contactsPath);
+    const peerIds = options?.peers ?? Object.keys(contacts);
+    const lookback = options?.lookbackEpochs ?? 1;
+    const now = mailboxEpoch();
+
+    // tag → the pair that would produce it
+    const tagIndex = new Map<string, { peerId: string; peerKey: string; key: Uint8Array }>();
+    for (const peerId of peerIds) {
+      const contact = contacts[peerId];
+      if (!contact) continue;
+      const key = mailboxKeyFor(this.keypair, contact.public_key);
+      for (let e = now - lookback; e <= now; e++) {
+        tagIndex.set(mailboxTag(key, e), { peerId, peerKey: contact.public_key, key });
+      }
+    }
+    if (tagIndex.size === 0) return [];
+
+    const allTags = [...tagIndex.keys()];
+    const messages: BlindedMessage[] = [];
+    // Fetch endpoint caps tags per call at 64.
+    for (let i = 0; i < allTags.length; i += 64) {
+      const chunk = allTags.slice(i, i + 64);
+      const params = new URLSearchParams({ tags: chunk.join(',') });
+      if (options?.since) params.set('since', options.since);
+      // No Authorization header — same reasoning as the deposit path.
+      const response = await fetch(`${this.apiBaseUrl}/mailbox?${params}`);
+      if (!response.ok) {
+        const error = (await response.json()) as ApiError;
+        throw new Error(`Mailbox fetch failed (${response.status}): ${error.error}`);
+      }
+      // deno-lint-ignore no-explicit-any
+      const result = (await response.json()) as any;
+      for (const item of (result.items ?? []) as Array<Record<string, string>>) {
+        const pair = tagIndex.get(item.tag);
+        if (!pair) continue;
+        const inner = decryptMailboxBlob(pair.key, item.blob);
+        if (!inner) continue;
+        // Both parties derive the same tag; our own deposits come back too.
+        if (inner.sender_agent_id === this.agentId) continue;
+        if (inner.sender_agent_id !== pair.peerId || !verifyInner(inner, pair.peerKey)) {
+          console.warn(
+            `[OACP] Dropped mailbox item on tag ${item.tag.slice(0, 8)}…: ` +
+            'inner signature/sender does not match the pinned pair key',
+          );
+          continue;
+        }
+        messages.push({
+          sender_agent_id: inner.sender_agent_id,
+          message_type: inner.message_type,
+          payload: inner.payload,
+          ...(inner.correlation_id ? { correlation_id: inner.correlation_id } : {}),
+          ts: inner.ts,
+          tag: item.tag,
+          item_id: item.item_id,
+          deposited_at: item.deposited_at,
+          expires_at: item.expires_at,
+        });
+      }
+    }
+
+    messages.sort((a, b) => (a.ts < b.ts ? -1 : a.ts > b.ts ? 1 : 0));
+    return messages;
   }
 
   /**

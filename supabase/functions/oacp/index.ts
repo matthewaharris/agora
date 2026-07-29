@@ -81,6 +81,11 @@ const RATE_LIMITS: Record<string, { window: number; max: number }> = {
   '/escrow/hold': { window: 60, max: 30 },
   '/escrow/release': { window: 60, max: 30 },
   '/escrow/refund': { window: 60, max: 30 },
+  // Blinded mailboxes are unauthenticated by design (RFC 001 §5.1), so the
+  // per-IP limit is the only admission control. Deposit mirrors
+  // /messages/send; fetch is a poll and gets read-endpoint headroom.
+  '/mailbox/deposit': { window: 60, max: 30 },
+  '/mailbox': { window: 60, max: 60 },
 };
 
 /**
@@ -3757,7 +3762,120 @@ async function handleGetThreadStatus(req: Request): Promise<Response> {
   });
 }
 
+// ============================================================
+// Blinded Mailboxes (RFC 001 §5.1)
+// ============================================================
+// Secret-tier dead drops addressed to rotating HMAC tags instead of agent
+// ids. These two handlers carry NO account authentication on purpose:
+// authenticating the depositor is precisely what this surface must never do.
+// The 256-bit tag is the capability — only the two parties can derive it,
+// and knowing it grants deposit and fetch. The registry's own tables cannot
+// link the parties; it sees "someone deposited to tag X; someone fetched
+// tag X" and an opaque blob it stores but never parses.
+
+const MAILBOX_TAG_RE = /^[0-9a-f]{64}$/;
+const MAILBOX_BLOB_MAX = 32768;
+const MAILBOX_TTL_MIN = 60;
+const MAILBOX_TTL_MAX = 604800; // 7 days — a mailbox is a dead drop, not an archive
+const MAILBOX_FETCH_MAX_TAGS = 64;
+const MAILBOX_FETCH_LIMIT = 200;
+
+async function handleMailboxDeposit(req: Request): Promise<Response> {
+  let body: Record<string, unknown>;
+  try {
+    body = await req.json();
+  } catch {
+    return errorResponse('Invalid JSON body', 400);
+  }
+
+  const tag = body.tag;
+  if (typeof tag !== 'string' || !MAILBOX_TAG_RE.test(tag)) {
+    return errorResponse('tag must be 64 lowercase hex characters', 400);
+  }
+  const blob = body.blob;
+  if (typeof blob !== 'string' || blob.length === 0 || blob.length > MAILBOX_BLOB_MAX) {
+    return errorResponse(`blob must be a non-empty string of at most ${MAILBOX_BLOB_MAX} characters`, 400);
+  }
+  const ttl = body.ttl_seconds === undefined ? MAILBOX_TTL_MAX : body.ttl_seconds;
+  if (typeof ttl !== 'number' || ttl < MAILBOX_TTL_MIN || ttl > MAILBOX_TTL_MAX) {
+    return errorResponse(`ttl_seconds must be a number between ${MAILBOX_TTL_MIN} and ${MAILBOX_TTL_MAX}`, 400);
+  }
+
+  const expiresAt = new Date(Date.now() + ttl * 1000).toISOString();
+  const supabase = getSupabaseAdmin();
+  const { data, error } = await supabase
+    .from('mailbox_items')
+    .insert({ tag, blob, expires_at: expiresAt })
+    .select('item_id, created_at')
+    .single();
+
+  if (error) {
+    console.error('[OACP] Mailbox deposit failed:', error);
+    return errorResponse('Deposit failed', 500);
+  }
+
+  return jsonResponse({
+    item_id: data.item_id,
+    deposited_at: data.created_at,
+    expires_at: expiresAt,
+  }, 201);
+}
+
+async function handleMailboxFetch(req: Request): Promise<Response> {
+  const url = new URL(req.url);
+  const tagsParam = url.searchParams.get('tags');
+  if (!tagsParam) return errorResponse('tags query parameter is required', 400);
+
+  const tags = tagsParam.split(',').map((t) => t.trim()).filter(Boolean);
+  if (tags.length === 0 || tags.length > MAILBOX_FETCH_MAX_TAGS) {
+    return errorResponse(`tags must list between 1 and ${MAILBOX_FETCH_MAX_TAGS} tags`, 400);
+  }
+  for (const t of tags) {
+    if (!MAILBOX_TAG_RE.test(t)) {
+      return errorResponse('every tag must be 64 lowercase hex characters', 400);
+    }
+  }
+
+  const since = url.searchParams.get('since');
+  if (since && Number.isNaN(Date.parse(since))) {
+    return errorResponse('since must be an ISO 8601 timestamp', 400);
+  }
+
+  const supabase = getSupabaseAdmin();
+  let query = supabase
+    .from('mailbox_items')
+    .select('item_id, tag, blob, created_at, expires_at')
+    .in('tag', tags)
+    // Never serve an item past its lifetime, even if the reaper has not
+    // swept it yet — expiry is a promise to the depositor, not a hint.
+    .gt('expires_at', new Date().toISOString())
+    .order('created_at', { ascending: true })
+    .limit(MAILBOX_FETCH_LIMIT);
+  if (since) query = query.gt('created_at', since);
+
+  const { data, error } = await query;
+  if (error) {
+    console.error('[OACP] Mailbox fetch failed:', error);
+    return errorResponse('Fetch failed', 500);
+  }
+
+  const items = (data ?? []).map((row) => ({
+    item_id: row.item_id,
+    tag: row.tag,
+    blob: row.blob,
+    deposited_at: row.created_at,
+    expires_at: row.expires_at,
+  }));
+  return jsonResponse({ items, count: items.length });
+}
+
 const routes: Record<string, Record<string, RouteHandler>> = {
+  '/mailbox/deposit': {
+    POST: (req) => handleMailboxDeposit(req),
+  },
+  '/mailbox': {
+    GET: (req) => handleMailboxFetch(req),
+  },
   '/threads/set-status': {
     POST: (req) => handleThreadSetStatus(req),
   },
