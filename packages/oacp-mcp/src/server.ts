@@ -433,9 +433,24 @@ export function buildServer(): { server: McpServer; shutdown: () => Promise<void
           .describe(
             "Self-declared public abstract of the thread (≤200 chars) shown to observers on 'summarized' threads, e.g. \"planning a joint research session\". Keep it honest; refresh with oacp_thread_control when the topic shifts.",
           ),
+        ttl_seconds: z
+          .number()
+          .int()
+          .min(60)
+          .max(31536000)
+          .optional()
+          .describe(
+            'RFC 001 §5 message lifetime: the registry destroys this payload after N seconds (60 … 31536000 = 1 year). Sealing decides WHO can read a payload; this decides HOW LONG it exists to be attacked later. Use for credentials, tokens, and incident detail. The envelope (sender, recipient, type, thread) survives for the audit trail — only the content is destroyed.',
+          ),
+        burn_after_read: z
+          .boolean()
+          .optional()
+          .describe(
+            "RFC 001 §5: destroy the payload once the recipient has fetched it (with a short grace window for retries). Combine with seal for secrets that should exist exactly once. The recipient's client should save what it needs on first read.",
+          ),
       },
     },
-    async ({ recipient_agent_id, message_type, payload, correlation_id, seal, visibility, public_summary, new_topic }) => {
+    async ({ recipient_agent_id, message_type, payload, correlation_id, seal, visibility, public_summary, new_topic, ttl_seconds, burn_after_read }) => {
       try {
         const a = await requireRegistered();
         // Handle recipients (RFC 002): resolve @owner/agent to the card and
@@ -475,7 +490,14 @@ export function buildServer(): { server: McpServer; shutdown: () => Promise<void
           recipient_agent_id,
           message_type as MessageType,
           payload as Record<string, unknown>,
-          { correlationId: threadId, seal, visibility, publicSummary: public_summary },
+          {
+            correlationId: threadId,
+            seal,
+            visibility,
+            publicSummary: public_summary,
+            ttlSeconds: ttl_seconds,
+            burnAfterRead: burn_after_read,
+          },
         );
 
         // Report what the registry ACTUALLY did, never what was requested —
@@ -488,6 +510,8 @@ export function buildServer(): { server: McpServer; shutdown: () => Promise<void
           visibility: receipt.visibility,
           delivery_status: receipt.delivery_status,
           observer_readable: receipt.observer_readable,
+          ...(receipt.expires_at ? { expires_at: receipt.expires_at } : {}),
+          ...(receipt.burn_after_read ? { burn_after_read: true } : {}),
           ...(continuedThread ? { continued_existing_thread: true } : {}),
           note:
             (receipt.observer_readable
@@ -498,6 +522,16 @@ export function buildServer(): { server: McpServer; shutdown: () => Promise<void
             (receipt.delivery_status === 'quarantined'
               ? 'Held as first contact: the recipient has not accepted this agent yet, so their side will not see the payload until their human decides. It is not lost. '
               : '') +
+            (ttl_seconds !== undefined && !receipt.expires_at
+              ? '⚠️ TTL NOT CONFIRMED: the registry receipt did not echo an expiry — treat this payload as persistent. '
+              : receipt.expires_at
+                ? `Payload will be destroyed at ${receipt.expires_at}. `
+                : '') +
+            (burn_after_read && !receipt.burn_after_read
+              ? '⚠️ BURN-AFTER-READ NOT CONFIRMED by the registry receipt — treat this payload as persistent. '
+              : receipt.burn_after_read
+                ? 'Payload will be destroyed once the recipient reads it. '
+                : '') +
             (continuedThread
               ? 'Continued the existing thread with this agent rather than starting a new one. '
               : '') +

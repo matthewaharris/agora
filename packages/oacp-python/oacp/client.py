@@ -247,8 +247,18 @@ class OACPClient:
         payload: dict[str, Any],
         *,
         correlation_id: str | None = None,
+        ttl_seconds: int | None = None,
+        burn_after_read: bool = False,
     ) -> str:
-        """Send a signed message. Returns message_id."""
+        """
+        Send a signed message. Returns message_id.
+
+        RFC 001 §5 lifetimes: ttl_seconds (60 … 31536000 = 1 year) asks the
+        registry to destroy the payload after that long; burn_after_read
+        destroys it once the recipient has fetched it. Sealing decides who can
+        read a payload; these decide how long it exists to be attacked later.
+        Check last_receipt["expires_at"] to verify the lifetime took effect.
+        """
         msg_body: dict[str, Any] = {
             "sender_agent_id": self.agent_id,
             "recipient_agent_id": recipient_id,
@@ -261,6 +271,12 @@ class OACPClient:
         # Sign canonical message
         canonical = _canonicalize(msg_body)
         msg_body["signature"] = self._sign(canonical)
+
+        # Lifetime fields ride outside the signed canonical, like visibility.
+        if ttl_seconds is not None:
+            msg_body["ttl_seconds"] = ttl_seconds
+        if burn_after_read:
+            msg_body["burn_after_read"] = True
 
         resp = self._http.post(
             f"{self._base_url}/messages/send",
@@ -276,13 +292,19 @@ class OACPClient:
     def _receipt(self, data: dict[str, Any], *, sealed: bool) -> dict[str, Any]:
         """What the registry actually did — not what the caller believed."""
         visibility = data.get("visibility", "open")
-        return {
+        receipt = {
             "message_id": data["message_id"],
             "sealed": sealed,
             "visibility": visibility,
             "delivery_status": data.get("delivery_status", "delivered"),
             "observer_readable": (not sealed) and visibility in ("open", "summarized"),
         }
+        # RFC 001 §5 — echoed only when the registry actually set a lifetime.
+        if data.get("expires_at"):
+            receipt["expires_at"] = data["expires_at"]
+        if data.get("burn_after_read"):
+            receipt["burn_after_read"] = True
+        return receipt
 
     @staticmethod
     def _warn_if_public(receipt: dict[str, Any], message_type: str) -> None:
@@ -315,15 +337,25 @@ class OACPClient:
         payload: dict[str, Any],
         *,
         correlation_id: str | None = None,
+        ttl_seconds: int | None = None,
+        burn_after_read: bool = False,
     ) -> dict[str, Any]:
         """
         Send and return what the registry actually did, rather than just an id.
 
         Prefer this whenever content is sensitive: 'sealed' and
         'observer_readable' are the difference between believing a channel is
-        private and knowing it.
+        private and knowing it. Likewise a requested lifetime is only real if
+        'expires_at' / 'burn_after_read' come back on the receipt.
         """
-        self.send(recipient_id, message_type, payload, correlation_id=correlation_id)
+        self.send(
+            recipient_id,
+            message_type,
+            payload,
+            correlation_id=correlation_id,
+            ttl_seconds=ttl_seconds,
+            burn_after_read=burn_after_read,
+        )
         return self.last_receipt
 
     def current_thread_with(self, agent_id: str, *, max_age_hours: float = 24.0) -> str | None:
@@ -369,6 +401,8 @@ class OACPClient:
         payload: dict[str, Any],
         *,
         correlation_id: str | None = None,
+        ttl_seconds: int | None = None,
+        burn_after_read: bool = False,
     ) -> str:
         msg_body: dict[str, Any] = {
             "sender_agent_id": self.agent_id,
@@ -381,6 +415,11 @@ class OACPClient:
 
         canonical = _canonicalize(msg_body)
         msg_body["signature"] = self._sign(canonical)
+
+        if ttl_seconds is not None:
+            msg_body["ttl_seconds"] = ttl_seconds
+        if burn_after_read:
+            msg_body["burn_after_read"] = True
 
         resp = await self._async_http.post(
             f"{self._base_url}/messages/send",

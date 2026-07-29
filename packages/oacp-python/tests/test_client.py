@@ -205,6 +205,108 @@ def test_discover_returns_agents(mock_client_cls):
     assert result.agents[0].name == "agent-1"
 
 
+# ── Message lifetimes (RFC 001 §5) ──
+
+@patch("oacp.client.httpx.Client")
+def test_send_lifetime_fields_ride_outside_signature(mock_client_cls):
+    from nacl.signing import VerifyKey
+
+    mock_resp = MagicMock()
+    mock_resp.json.return_value = {
+        "message_id": "m1",
+        "visibility": "private",
+        "expires_at": "2026-07-29T00:00:00Z",
+        "burn_after_read": True,
+    }
+    mock_resp.raise_for_status = MagicMock()
+
+    mock_http = MagicMock()
+    mock_http.post.return_value = mock_resp
+    mock_client_cls.return_value = mock_http
+
+    client = OACPClient(name="test", capabilities=["x"])
+    client.agent_id = "sender-1"
+    client._registry_token = "tok"
+
+    client.send("recipient-1", "chat", {"text": "secret"}, ttl_seconds=300, burn_after_read=True)
+
+    body = mock_http.post.call_args[1]["json"]
+    assert body["ttl_seconds"] == 300
+    assert body["burn_after_read"] is True
+
+    # The signature must cover the canonical WITHOUT the lifetime fields —
+    # they are routing metadata like visibility, added after signing.
+    canonical = _canonicalize({
+        k: v for k, v in body.items()
+        if k not in ("signature", "ttl_seconds", "burn_after_read")
+    })
+    VerifyKey(bytes.fromhex(client.public_key)).verify(
+        canonical.encode(), bytes.fromhex(body["signature"])
+    )
+    client.close()
+
+
+@patch("oacp.client.httpx.Client")
+def test_receipt_echoes_lifetime(mock_client_cls):
+    mock_resp = MagicMock()
+    mock_resp.json.return_value = {
+        "message_id": "m2",
+        "visibility": "private",
+        "expires_at": "2026-07-29T00:00:00Z",
+        "burn_after_read": True,
+    }
+    mock_resp.raise_for_status = MagicMock()
+
+    mock_http = MagicMock()
+    mock_http.post.return_value = mock_resp
+    mock_client_cls.return_value = mock_http
+
+    client = OACPClient(name="test", capabilities=["x"])
+    client.agent_id = "sender-1"
+    client._registry_token = "tok"
+
+    receipt = client.send_checked(
+        "recipient-1", "chat", {"text": "s"}, ttl_seconds=300, burn_after_read=True
+    )
+    assert receipt["expires_at"] == "2026-07-29T00:00:00Z"
+    assert receipt["burn_after_read"] is True
+    client.close()
+
+
+@patch("oacp.client.httpx.Client")
+def test_receipt_omits_lifetime_when_registry_silent(mock_client_cls):
+    mock_resp = MagicMock()
+    mock_resp.json.return_value = {"message_id": "m3", "visibility": "open"}
+    mock_resp.raise_for_status = MagicMock()
+
+    mock_http = MagicMock()
+    mock_http.post.return_value = mock_resp
+    mock_client_cls.return_value = mock_http
+
+    client = OACPClient(name="test", capabilities=["x"])
+    client.agent_id = "sender-1"
+    client._registry_token = "tok"
+
+    receipt = client.send_checked("recipient-1", "task_request", {"action": "x"})
+    assert "expires_at" not in receipt
+    assert "burn_after_read" not in receipt
+    client.close()
+
+
+def test_message_from_dict_lifetime_fields():
+    m = Message.from_dict({
+        "message_id": "m4",
+        "sender_agent_id": "a",
+        "recipient_agent_id": "b",
+        "message_type": "chat",
+        "payload": {},
+        "expires_at": "2026-07-29T00:00:00Z",
+        "burn_after_read": True,
+    })
+    assert m.expires_at == "2026-07-29T00:00:00Z"
+    assert m.burn_after_read is True
+
+
 # ── Context manager ──
 
 def test_context_manager():
