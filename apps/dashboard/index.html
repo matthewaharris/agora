@@ -761,6 +761,56 @@
       letter-spacing: 0;
     }
 
+    /* ═══ NOTIFICATION CHANNELS (RFC 006) ═══ */
+    .chan-add {
+      flex: 1;
+      padding: 8px;
+      border-radius: 8px;
+      border: 1px solid var(--border-strong);
+      background: transparent;
+      color: var(--text-dim);
+      font-family: inherit;
+      font-size: 12px;
+      cursor: pointer;
+    }
+    .chan-add:hover { color: var(--text); border-color: var(--accent); }
+    .chan-row {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 7px 0;
+      font-size: 12.5px;
+      border-bottom: 1px solid var(--border);
+    }
+    .chan-row:last-child { border-bottom: none; }
+    .chan-kind {
+      font-family: var(--font-mono);
+      font-size: 10.5px;
+      text-transform: uppercase;
+      color: var(--accent);
+      min-width: 58px;
+    }
+    .chan-addr {
+      flex: 1;
+      color: var(--text-dim);
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    .chan-state { font-size: 10.5px; font-family: var(--font-mono); }
+    .chan-state.ok { color: var(--green); }
+    .chan-state.pending { color: #fbbf24; }
+    .chan-remove {
+      border: none;
+      background: transparent;
+      color: var(--text-faint);
+      cursor: pointer;
+      font-size: 15px;
+      line-height: 1;
+      padding: 0 2px;
+    }
+    .chan-remove:hover { color: #f87171; }
+
     /* ═══ APPROVALS (RFC 005) ═══ */
     .tab-badge.urgent {
       background: linear-gradient(135deg, #f59e0b, #f87171);
@@ -1050,6 +1100,19 @@
           <div id="attachCodeBox" style="display:none;text-align:center;margin:12px 0;padding:14px;border:1px dashed var(--border-strong);border-radius:10px">
             <div id="attachCodeValue" style="font-size:26px;font-weight:700;letter-spacing:3px;font-family:monospace"></div>
             <div style="color:var(--text-dim);font-size:12px;margin-top:8px">Tell your agent: <em>"attach to my Liteneen account with code <span class="attach-code-echo"></span>"</em> <button id="copyAttachPromptBtn" title="Copy prompt" onclick="copyAttachPrompt()" style="border:none;background:transparent;color:var(--text-dim);cursor:pointer;padding:0 2px;vertical-align:middle"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg></button><br>Single use · expires in 15 minutes</div>
+          </div>
+          <div style="margin:16px 0 12px;padding-top:14px;border-top:1px solid var(--border)">
+            <p style="font-size:13px;font-weight:600;margin-bottom:4px">Alerts</p>
+            <p style="color:var(--text-dim);font-size:12px;margin-bottom:10px">
+              Where to reach you when an agent needs a decision — an unknown agent trying to
+              reach it, for now. Your agent waits until you answer.
+            </p>
+            <div id="channelList"></div>
+            <div style="display:flex;gap:8px;margin-top:10px">
+              <button class="chan-add" onclick="addChannel('email')">+ Email</button>
+              <button class="chan-add" onclick="addChannel('telegram')">+ Telegram</button>
+            </div>
+            <div id="channelResult" style="display:none;margin-top:12px;padding:12px;border:1px dashed var(--border-strong);border-radius:10px"></div>
           </div>
           <button style="width:100%;padding:8px;border-radius:8px;border:1px solid var(--border-strong);background:transparent;color:var(--text-dim);cursor:pointer" onclick="signOut()">Sign out</button>
         </div>
@@ -1730,6 +1793,93 @@
     }
 
     // ============================================================
+    // RFC 006 — notification channels
+    // ============================================================
+
+    async function channelApi(method, body) {
+      const cfg = getConfig();
+      const res = await fetch(`${cfg.url}/functions/v1/oacp/notifications/channels`, {
+        method,
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${authSession.access_token}`,
+        },
+        ...(body ? { body: JSON.stringify(body) } : {}),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
+      return data;
+    }
+
+    async function loadChannels() {
+      const list = document.getElementById('channelList');
+      if (!list || !authSession) return;
+      try {
+        const { channels } = await channelApi('GET');
+        if (!channels.length) {
+          list.innerHTML = '<p style="color:var(--text-faint);font-size:12px">No alert channels yet — you will not be told when an agent is waiting on you.</p>';
+          return;
+        }
+        list.innerHTML = channels.map((c) => {
+          const pending = !c.verified_at;
+          // A telegram channel that has not been linked still stores its code
+          // as the address; showing "pending:abc123" would be noise.
+          const addr = c.kind === 'telegram' && pending ? 'waiting for /start' : c.address;
+          return `
+            <div class="chan-row">
+              <span class="chan-kind">${esc(c.kind)}</span>
+              <span class="chan-addr">${esc(addr)}</span>
+              <span class="chan-state ${pending ? 'pending' : 'ok'}">${pending ? 'unconfirmed' : 'active'}</span>
+              <button class="chan-remove" title="Remove" onclick="removeChannel('${c.channel_id}')">×</button>
+            </div>`;
+        }).join('');
+      } catch (err) {
+        list.innerHTML = `<p style="color:#f87171;font-size:12px">${esc(err.message)}</p>`;
+      }
+    }
+
+    async function addChannel(kind) {
+      const box = document.getElementById('channelResult');
+      box.style.display = '';
+      box.innerHTML = '<span style="color:var(--text-dim);font-size:12px">Working…</span>';
+      try {
+        if (kind === 'email') {
+          const address = prompt('Email address for Liteneen alerts:');
+          if (!address) { box.style.display = 'none'; return; }
+          const res = await channelApi('POST', { kind: 'email', address });
+          box.innerHTML = res.verification_sent
+            ? `<span style="font-size:12px">Confirmation sent to <strong>${esc(address)}</strong>. Click the link in it — nothing is sent here until you do.</span>`
+            : `<span style="font-size:12px;color:var(--green)">Added <strong>${esc(address)}</strong> — already confirmed, since it is your sign-in address.</span>`;
+        } else {
+          const res = await channelApi('POST', { kind: 'telegram' });
+          // Telegram only forwards a deep-link code on a FIRST start, so give
+          // the typed form too — that path always works.
+          box.innerHTML = `
+            <div style="font-size:12px;line-height:1.6">
+              <a href="${res.bot_url}" target="_blank" rel="noopener"
+                 style="display:inline-block;background:linear-gradient(135deg,#6366f1,#8b5cf6);color:#fff;padding:8px 14px;border-radius:8px;text-decoration:none;font-weight:600;margin-bottom:8px">Open @${esc((res.bot_url || '').split('/').pop().split('?')[0])}</a>
+              <div style="color:var(--text-dim)">
+                If you have messaged the bot before, Telegram drops the code — just type this into the chat:
+              </div>
+              <code style="display:block;margin-top:6px;font-family:var(--font-mono);font-size:12px;color:#c084fc;background:rgba(192,132,252,.1);padding:6px 8px;border-radius:6px">/start ${esc(res.link_code)}</code>
+            </div>`;
+        }
+        await loadChannels();
+      } catch (err) {
+        box.innerHTML = `<span style="color:#f87171;font-size:12px">${esc(err.message)}</span>`;
+      }
+    }
+
+    async function removeChannel(channelId) {
+      try {
+        await channelApi('POST', { remove_channel_id: channelId });
+        await loadChannels();
+      } catch (err) {
+        console.warn('[OACP Dashboard] channel remove failed', err);
+      }
+    }
+
+    // ============================================================
     // RFC 006 — decide from a notification link
     // ============================================================
 
@@ -1959,6 +2109,7 @@
       if (step === 'Account' && authSession) {
         document.getElementById('authAccountEmail').textContent = authSession.user.email;
         refreshKeyStatus();
+        loadChannels();
       }
     }
     async function refreshKeyStatus() {
