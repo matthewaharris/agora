@@ -30,6 +30,8 @@ import {
   signMessage,
   verifySignature,
   canonicalizeMessage,
+  toHex,
+  fromHex,
   type OACPKeypair,
 } from './crypto.js';
 import {
@@ -62,9 +64,24 @@ import {
   verifyInner,
   encryptMailboxBlob,
   decryptMailboxBlob,
+  generateThreadEphemeral,
+  deriveThreadKey,
+  seedChain,
+  chainStep,
+  encryptRatchetBlob,
+  decryptRatchetHeader,
+  decryptRatchetBody,
+  RATCHET_SKIP_MAX,
   type BlindedInner,
   type BlindedMessage,
+  type RatchetState,
 } from './mailbox.js';
+import {
+  ratchetThreadKey,
+  loadRatchets,
+  saveRatchet,
+  deleteRatchet,
+} from './ratchets.js';
 import type {
   RegisterResponse,
   ReregisterResponse,
@@ -119,6 +136,10 @@ export class OACPAgent {
   // Contacts file (RFC 002 §3): local pinned-key address book
   private contactsPath!: string;
 
+  // Ratchet state file (RFC 001 §5.2): per-thread forward-secrecy state.
+  // Deleting an entry is what makes a thread's ciphertext unrecoverable.
+  private ratchetsPath!: string;
+
   // Terms-of-Service notice returned by the registry at registration (when
   // legal go-live is enabled); null until then.
   private termsNotice: string | null = null;
@@ -141,6 +162,10 @@ export class OACPAgent {
     // Contacts (RFC 002 §3): pinned counterparty keys, beside the keypair
     this.contactsPath = config.contactsPath
       || keypairPath.replace(/[^/\\]+$/, 'contacts.json');
+
+    // Ratchet state (RFC 001 §5.2), beside the keypair like contacts
+    this.ratchetsPath = config.ratchetsPath
+      || keypairPath.replace(/[^/\\]+$/, 'ratchets.json');
 
     // Set API base URL
     const supabaseUrl = config.supabaseUrl || OACP_PUBLIC_REGISTRY_URL;
@@ -848,7 +873,14 @@ export class OACPAgent {
       /** Item lifetime, 60 … 604800 s (7 days, the default and maximum). */
       ttlSeconds?: number;
     },
-  ): Promise<{ tag: string; item_id: string; deposited_at: string; expires_at: string }> {
+  ): Promise<{
+    tag: string;
+    item_id: string;
+    deposited_at: string;
+    expires_at: string;
+    /** RFC 001 §5.2: true when sent under a ratcheted thread key. */
+    forward_secret: boolean;
+  }> {
     if (!this.agentId || !this.registryToken) {
       throw new Error('[OACP] Agent must be registered before sending');
     }
@@ -862,15 +894,45 @@ export class OACPAgent {
     }
 
     const key = mailboxKeyFor(this.keypair, contact.public_key);
+    const cid = options?.correlationId;
     const unsigned: Omit<BlindedInner, 'sig'> = {
       sender_agent_id: this.agentId,
       message_type: messageType,
       payload,
-      ...(options?.correlationId ? { correlation_id: options.correlationId } : {}),
+      ...(cid ? { correlation_id: cid } : {}),
       ts: new Date().toISOString(),
     };
-    const inner: BlindedInner = { ...unsigned, sig: signInner(unsigned, this.keypair.secretKey) };
-    const blob = encryptMailboxBlob(key, inner);
+
+    let blob: string;
+    let forwardSecret = false;
+    if (cid) {
+      // Threads ratchet (RFC 001 §5.2). Once the thread key exists, every
+      // send uses a one-time message key; before that, sends stay statically
+      // encrypted and carry our per-thread ephemeral inside the signed inner.
+      const rkey = ratchetThreadKey(recipientId, cid);
+      let state = loadRatchets(this.ratchetsPath)[rkey];
+      if (state?.tk && state.send) {
+        const header = { ek: state.my_ek_pub, i: state.send.i, correlation_id: cid, s: this.agentId };
+        const inner: BlindedInner = { ...unsigned, sig: signInner(unsigned, this.keypair.secretKey) };
+        const { mk, next } = chainStep(state.send);
+        blob = encryptRatchetBlob(key, mk, header, inner);
+        saveRatchet(this.ratchetsPath, rkey, { ...state, send: next });
+        forwardSecret = true;
+      } else {
+        if (!state) {
+          const eph = generateThreadEphemeral();
+          state = { my_ek_pub: eph.pub, my_ek_secret: eph.secret, updated_at: '' };
+          saveRatchet(this.ratchetsPath, rkey, state);
+        }
+        const withEk = { ...unsigned, ek: state.my_ek_pub };
+        const inner: BlindedInner = { ...withEk, sig: signInner(withEk, this.keypair.secretKey) };
+        blob = encryptMailboxBlob(key, inner);
+      }
+    } else {
+      // No thread, no ratchet: one-off messages stay statically encrypted.
+      const inner: BlindedInner = { ...unsigned, sig: signInner(unsigned, this.keypair.secretKey) };
+      blob = encryptMailboxBlob(key, inner);
+    }
     const tag = mailboxTag(key, mailboxEpoch());
 
     // Deliberately NO Authorization header: a bearer token on the deposit
@@ -895,6 +957,7 @@ export class OACPAgent {
       item_id: result.item_id as string,
       deposited_at: result.deposited_at as string,
       expires_at: result.expires_at as string,
+      forward_secret: forwardSecret,
     };
   }
 
@@ -910,6 +973,12 @@ export class OACPAgent {
    * PINNED key, or whose claimed sender is not the pair's peer, are dropped
    * with a warning: only the pair can derive the key, so either indicates
    * tampering or a peer lying about its identity.
+   *
+   * Ratcheted messages (forward_secret: true) are returned ONCE: their
+   * message key is deleted on use — that deletion IS the forward secrecy —
+   * so a later poll cannot decrypt them again. Persist what you need when
+   * you receive it. (Pre-handshake v1 messages remain statically
+   * decryptable and reappear on every poll within their TTL; use `since`.)
    */
   async checkBlindedMailbox(options?: {
     /** Restrict to these peer agent ids (default: all pinned contacts). */
@@ -956,33 +1025,185 @@ export class OACPAgent {
       for (const item of (result.items ?? []) as Array<Record<string, string>>) {
         const pair = tagIndex.get(item.tag);
         if (!pair) continue;
+
+        // --- v1: static pair encryption (plus §5.2 handshake material) ---
         const inner = decryptMailboxBlob(pair.key, item.blob);
-        if (!inner) continue;
-        // Both parties derive the same tag; our own deposits come back too.
-        if (inner.sender_agent_id === this.agentId) continue;
-        if (inner.sender_agent_id !== pair.peerId || !verifyInner(inner, pair.peerKey)) {
+        if (inner) {
+          // Both parties derive the same tag; our own deposits come back too.
+          if (inner.sender_agent_id === this.agentId) continue;
+          if (inner.sender_agent_id !== pair.peerId || !verifyInner(inner, pair.peerKey)) {
+            console.warn(
+              `[OACP] Dropped mailbox item on tag ${item.tag.slice(0, 8)}…: ` +
+              'inner signature/sender does not match the pinned pair key',
+            );
+            continue;
+          }
+          // An ek inside a signed thread inner is the peer's per-thread
+          // ephemeral (RFC 001 §5.2). Complete the thread key if we can;
+          // idempotent on re-poll once tk exists.
+          if (inner.ek && inner.correlation_id) {
+            const rkey = ratchetThreadKey(pair.peerId, inner.correlation_id);
+            const existing = loadRatchets(this.ratchetsPath)[rkey];
+            if (!existing) {
+              // We are the responder: our ephemeral is born and its secret
+              // dies inside this block — only the thread key persists.
+              const eph = generateThreadEphemeral();
+              const tk = deriveThreadKey(eph.secret, inner.ek);
+              saveRatchet(this.ratchetsPath, rkey, {
+                my_ek_pub: eph.pub,
+                their_ek_pub: inner.ek,
+                tk,
+                send: seedChain(tk, this.agentId),
+                recv: seedChain(tk, pair.peerId),
+                skipped: {},
+                updated_at: '',
+              });
+            } else if (!existing.tk && existing.my_ek_secret) {
+              // Simultaneous initiation: both sides sent v1+ek. DH is
+              // symmetric, so both converge on the same thread key.
+              const tk = deriveThreadKey(existing.my_ek_secret, inner.ek);
+              saveRatchet(this.ratchetsPath, rkey, {
+                my_ek_pub: existing.my_ek_pub,
+                their_ek_pub: inner.ek,
+                tk,
+                send: seedChain(tk, this.agentId),
+                recv: seedChain(tk, pair.peerId),
+                skipped: {},
+                updated_at: '',
+              });
+            }
+          }
+          messages.push({
+            sender_agent_id: inner.sender_agent_id,
+            message_type: inner.message_type,
+            payload: inner.payload,
+            ...(inner.correlation_id ? { correlation_id: inner.correlation_id } : {}),
+            ts: inner.ts,
+            tag: item.tag,
+            item_id: item.item_id,
+            deposited_at: item.deposited_at,
+            expires_at: item.expires_at,
+            forward_secret: false,
+          });
+          continue;
+        }
+
+        // --- v2: ratcheted (RFC 001 §5.2) ---
+        const v2 = decryptRatchetHeader(pair.key, item.blob);
+        if (!v2) continue; // not for this pair, or garbage — normal when polling
+        const { header, nonce, ct } = v2;
+        // Recognize own echoes BEFORE touching chain state — misreading one
+        // as the peer's would desync the receive chain.
+        if (header.s === this.agentId) continue;
+        if (header.s !== pair.peerId) {
+          console.warn(`[OACP] Dropped ratcheted item on tag ${item.tag.slice(0, 8)}…: header sender is not the pair peer`);
+          continue;
+        }
+        const rkey = ratchetThreadKey(pair.peerId, header.correlation_id);
+        let state = loadRatchets(this.ratchetsPath)[rkey];
+        if (!state) {
           console.warn(
-            `[OACP] Dropped mailbox item on tag ${item.tag.slice(0, 8)}…: ` +
+            `[OACP] Dropped ratcheted item on tag ${item.tag.slice(0, 8)}…: ` +
+            'no local ratchet state for this thread (state is per-machine)',
+          );
+          continue;
+        }
+        if (!state.tk) {
+          if (!state.my_ek_secret) continue;
+          // Initiator bootstrap: the peer's first ratcheted message carries
+          // its ephemeral in the static-encrypted header. Deriving the
+          // thread key here is also the moment our ephemeral secret dies.
+          const tk = deriveThreadKey(state.my_ek_secret, header.ek);
+          state = {
+            my_ek_pub: state.my_ek_pub,
+            their_ek_pub: header.ek,
+            tk,
+            send: seedChain(tk, this.agentId),
+            recv: seedChain(tk, pair.peerId),
+            skipped: {},
+            updated_at: state.updated_at,
+          };
+        }
+        const recv = state.recv!;
+        const skipped = { ...(state.skipped ?? {}) };
+        let mk: Uint8Array | null = null;
+        if (header.i < recv.i) {
+          // Behind the chain: either cached out-of-order, or already
+          // consumed (a re-poll, or a replay — both drop quietly).
+          const cached = skipped[String(header.i)];
+          if (!cached) continue;
+          mk = fromHex(cached);
+          delete skipped[String(header.i)];
+          state = { ...state, skipped };
+        } else {
+          if (header.i - recv.i > RATCHET_SKIP_MAX) {
+            console.warn(`[OACP] Dropped ratcheted item: index ${header.i} too far ahead of chain (${recv.i})`);
+            continue;
+          }
+          let chain = recv;
+          while (chain.i < header.i) {
+            const step = chainStep(chain);
+            skipped[String(chain.i)] = toHex(step.mk);
+            chain = step.next;
+          }
+          const step = chainStep(chain);
+          mk = step.mk;
+          state = { ...state, recv: step.next, skipped };
+        }
+        const body = decryptRatchetBody(mk, nonce, ct);
+        if (!body) {
+          // A corrupt body must not burn this index's key — keep it so a
+          // genuine arrival at the same index can still decrypt.
+          skipped[String(header.i)] = toHex(mk);
+          saveRatchet(this.ratchetsPath, rkey, { ...state, skipped });
+          console.warn(`[OACP] Ratcheted item on tag ${item.tag.slice(0, 8)}… failed body decryption; key retained`);
+          continue;
+        }
+        // Cap the out-of-order cache; oldest (lowest) indices go first.
+        const skipKeys = Object.keys(state.skipped ?? {});
+        if (skipKeys.length > RATCHET_SKIP_MAX) {
+          for (const k of skipKeys.map(Number).sort((a, b) => a - b).slice(0, skipKeys.length - RATCHET_SKIP_MAX)) {
+            delete state.skipped![String(k)];
+          }
+        }
+        saveRatchet(this.ratchetsPath, rkey, state);
+        if (body.sender_agent_id !== pair.peerId || !verifyInner(body, pair.peerKey)) {
+          console.warn(
+            `[OACP] Dropped ratcheted item on tag ${item.tag.slice(0, 8)}…: ` +
             'inner signature/sender does not match the pinned pair key',
           );
           continue;
         }
         messages.push({
-          sender_agent_id: inner.sender_agent_id,
-          message_type: inner.message_type,
-          payload: inner.payload,
-          ...(inner.correlation_id ? { correlation_id: inner.correlation_id } : {}),
-          ts: inner.ts,
+          sender_agent_id: body.sender_agent_id,
+          message_type: body.message_type,
+          payload: body.payload,
+          ...(body.correlation_id ? { correlation_id: body.correlation_id } : {}),
+          ts: body.ts,
           tag: item.tag,
           item_id: item.item_id,
           deposited_at: item.deposited_at,
           expires_at: item.expires_at,
+          forward_secret: true,
         });
       }
     }
 
     messages.sort((a, b) => (a.ts < b.ts ? -1 : a.ts > b.ts ? 1 : 0));
     return messages;
+  }
+
+  /**
+   * End a blinded thread by destroying its ratchet state (RFC 001 §5.2).
+   *
+   * This is the forward-secrecy lever: with the thread key and chains gone,
+   * every ratcheted message of this thread — including copies still sitting
+   * in the registry's mailbox table awaiting expiry — is permanently
+   * undecryptable, even by us, even with both identity keys. Returns false
+   * if there was no state to destroy.
+   */
+  endBlindedThread(peerId: string, correlationId: string): boolean {
+    return deleteRatchet(this.ratchetsPath, ratchetThreadKey(peerId, correlationId));
   }
 
   /**

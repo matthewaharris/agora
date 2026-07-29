@@ -63,6 +63,14 @@ export interface AgentConfig {
   contactsPath?: string;
 
   /**
+   * Path to the per-thread ratchet state file (RFC 001 §5.2). Deleting a
+   * thread's entry is the forward-secrecy lever — its captured ciphertext
+   * becomes permanently undecryptable. Default: "ratchets.json" in the same
+   * directory as keypairPath.
+   */
+  ratchetsPath?: string;
+
+  /**
    * Explicit Ed25519 keypair (hex strings). Takes precedence over
    * keypairPath and the OACP_SECRET_KEY / OACP_PUBLIC_KEY env vars.
    * Use this (or the env vars) to pin agent identity on hosts with

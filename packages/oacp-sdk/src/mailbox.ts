@@ -65,6 +65,12 @@ export interface BlindedInner {
   correlation_id?: string;
   /** Sender-claimed send time, ISO 8601. */
   ts: string;
+  /**
+   * RFC 001 §5.2 handshake: the sender's per-thread ephemeral X25519 public
+   * key, carried in pre-ratchet (v1) messages. Inside the signed inner, so
+   * the ephemeral is bound to the sender's pinned identity.
+   */
+  ek?: string;
   /** Ed25519 over the canonical inner (minus sig), hex. */
   sig: string;
 }
@@ -81,6 +87,12 @@ export interface BlindedMessage {
   item_id: string;
   deposited_at: string;
   expires_at: string;
+  /**
+   * RFC 001 §5.2: true when this arrived under a ratcheted thread key —
+   * its message key is already deleted, and a later identity-key compromise
+   * cannot recover the content. False = static pair encryption (v1).
+   */
+  forward_secret: boolean;
 }
 
 function utf8(s: string): Uint8Array {
@@ -167,6 +179,167 @@ export function decryptMailboxBlob(mailboxKey: Uint8Array, blob: string): Blinde
     const plaintext = xchacha20poly1305(msgKey, nonce).decrypt(
       new Uint8Array(Buffer.from(parsed.ct, 'base64')),
     );
+    return JSON.parse(new TextDecoder().decode(plaintext)) as BlindedInner;
+  } catch {
+    return null;
+  }
+}
+
+// ============================================================
+// Per-thread ratcheting (RFC 001 §5.2)
+// ============================================================
+// Forward secrecy established entirely inside the ciphertext — the registry
+// relays v2 blobs exactly as it relays v1, because blobs were opaque to
+// begin with. The thread key comes from an ephemeral-ephemeral DH completed
+// over the first round trip; both sides delete the ephemeral SECRET the
+// moment the thread key exists, so a later identity-key compromise plus the
+// full captured blob history cannot reconstruct ratcheted content.
+
+export const MAILBOX_RATCHET_VERSION = 2;
+/** Out-of-order tolerance: cached skipped message keys per direction. */
+export const RATCHET_SKIP_MAX = 64;
+
+/** Wire format of a ratcheted blob. Same opacity guarantee as v1. */
+export interface RatchetBlob extends Record<string, unknown> {
+  v: number;
+  alg: string;
+  /** 24-byte nonce, hex (shared by hdr and ct, which use distinct keys) */
+  n: string;
+  /**
+   * Header encrypted under the STATIC pair key, base64. Readable by both
+   * parties before the thread key exists — that is what lets the responder's
+   * first ratcheted message bootstrap the initiator. It must never ride in
+   * cleartext: a per-thread constant ephemeral pub visible to the registry
+   * would link the pair's rotating tags across epochs (§5.1).
+   */
+  hdr: string;
+  /** AEAD(inner JSON) under the per-message chain key, base64 */
+  ct: string;
+}
+
+/** Plaintext of the encrypted header. */
+export interface RatchetHeader {
+  /** Sender's per-thread ephemeral X25519 public key, hex. */
+  ek: string;
+  /** Index in the sender's chain. */
+  i: number;
+  correlation_id: string;
+  /**
+   * Sender agent id. Safe here — the header is encrypted under the static
+   * pair key, so only the two parties read it — and necessary: both parties
+   * fetch the same tag, and a client must recognize its own echoed deposits
+   * BEFORE touching chain state, or an own-echo would desync the receive
+   * chain.
+   */
+  s: string;
+}
+
+/** Per-direction KDF chain state. */
+export interface ChainState {
+  /** Current chain key, hex. */
+  ck: string;
+  /** Next index. */
+  i: number;
+}
+
+/** Persisted ratchet state for one (peer, correlation_id) thread. */
+export interface RatchetState {
+  /** Own ephemeral: secret deleted once tk exists; pub kept for headers. */
+  my_ek_pub: string;
+  my_ek_secret?: string;
+  their_ek_pub?: string;
+  /** Thread key, hex — present once the DH is complete. */
+  tk?: string;
+  send?: ChainState;
+  recv?: ChainState;
+  /** Cached keys for out-of-order arrival: index → message key hex. */
+  skipped?: Record<string, string>;
+  updated_at: string;
+}
+
+const CHAIN_MK = new Uint8Array([0x01]);
+const CHAIN_CK = new Uint8Array([0x02]);
+
+/** Generate a per-thread ephemeral X25519 keypair. */
+export function generateThreadEphemeral(): { secret: string; pub: string } {
+  const secret = x25519.utils.randomSecretKey();
+  return { secret: toHex(secret), pub: toHex(x25519.getPublicKey(secret)) };
+}
+
+/** Complete the thread key from own ephemeral secret + peer ephemeral pub. */
+export function deriveThreadKey(myEkSecretHex: string, theirEkPubHex: string): string {
+  const dh = x25519.getSharedSecret(fromHex(myEkSecretHex), fromHex(theirEkPubHex));
+  return toHex(hkdf(sha256, dh, undefined, utf8('oacp-thread-key-v1'), 32));
+}
+
+/** Seed a direction's chain from the thread key. Direction = who sends. */
+export function seedChain(tkHex: string, senderAgentId: string): ChainState {
+  const ck = hkdf(sha256, fromHex(tkHex), undefined, utf8(`oacp-chain-v1:${senderAgentId}`), 32);
+  return { ck: toHex(ck), i: 0 };
+}
+
+/** One KDF-chain step: message key out, chain advanced. Old ck is dead. */
+export function chainStep(chain: ChainState): { mk: Uint8Array; next: ChainState } {
+  const ckBytes = fromHex(chain.ck);
+  const mk = hmac(sha256, ckBytes, CHAIN_MK);
+  const nextCk = hmac(sha256, ckBytes, CHAIN_CK);
+  return { mk, next: { ck: toHex(nextCk), i: chain.i + 1 } };
+}
+
+function hdrKey(mailboxKey: Uint8Array, nonce: Uint8Array): Uint8Array {
+  return hkdf(sha256, mailboxKey, nonce, utf8('oacp-mailbox-hdr-v1'), 32);
+}
+
+/** Encrypt a ratcheted (v2) blob: static-encrypted header + chain-keyed body. */
+export function encryptRatchetBlob(
+  mailboxKey: Uint8Array,
+  mk: Uint8Array,
+  header: RatchetHeader,
+  inner: BlindedInner,
+): string {
+  const nonce = randomBytes(NONCE_BYTES);
+  const hdrCt = xchacha20poly1305(hdrKey(mailboxKey, nonce), nonce).encrypt(utf8(JSON.stringify(header)));
+  const ct = xchacha20poly1305(mk, nonce).encrypt(utf8(JSON.stringify(inner)));
+  const blob: RatchetBlob = {
+    v: MAILBOX_RATCHET_VERSION,
+    alg: MAILBOX_ALG,
+    n: toHex(nonce),
+    hdr: Buffer.from(hdrCt).toString('base64'),
+    ct: Buffer.from(ct).toString('base64'),
+  };
+  return JSON.stringify(blob);
+}
+
+/**
+ * Decrypt just the header of a v2 blob with the static pair key. Returns
+ * null when the blob is not v2 or not for this pair — the normal case when
+ * polling several peers.
+ */
+export function decryptRatchetHeader(
+  mailboxKey: Uint8Array,
+  blob: string,
+): { header: RatchetHeader; nonce: Uint8Array; ct: Uint8Array } | null {
+  try {
+    const parsed = JSON.parse(blob) as RatchetBlob;
+    if (parsed.v !== MAILBOX_RATCHET_VERSION || parsed.alg !== MAILBOX_ALG) return null;
+    const nonce = fromHex(parsed.n);
+    const hdrPlain = xchacha20poly1305(hdrKey(mailboxKey, nonce), nonce).decrypt(
+      new Uint8Array(Buffer.from(parsed.hdr, 'base64')),
+    );
+    return {
+      header: JSON.parse(new TextDecoder().decode(hdrPlain)) as RatchetHeader,
+      nonce,
+      ct: new Uint8Array(Buffer.from(parsed.ct, 'base64')),
+    };
+  } catch {
+    return null;
+  }
+}
+
+/** Decrypt a v2 body with a message key. Null on wrong/stale key (replay). */
+export function decryptRatchetBody(mk: Uint8Array, nonce: Uint8Array, ct: Uint8Array): BlindedInner | null {
+  try {
+    const plaintext = xchacha20poly1305(mk, nonce).decrypt(ct);
     return JSON.parse(new TextDecoder().decode(plaintext)) as BlindedInner;
   } catch {
     return null;

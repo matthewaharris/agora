@@ -23,7 +23,7 @@
  * ```
  */
 
-export const VERSION = '0.16.0';
+export const VERSION = '0.17.0';
 
 // Main agent class
 export { OACPAgent } from './agent.js';
@@ -102,6 +102,29 @@ export {
   type BlindedInner,
   type BlindedMessage,
 } from './mailbox.js';
+
+// Per-thread ratcheting (RFC 001 §5.2)
+export {
+  generateThreadEphemeral,
+  deriveThreadKey,
+  seedChain,
+  chainStep,
+  encryptRatchetBlob,
+  decryptRatchetHeader,
+  decryptRatchetBody,
+  MAILBOX_RATCHET_VERSION,
+  RATCHET_SKIP_MAX,
+  type RatchetBlob,
+  type RatchetHeader,
+  type RatchetState,
+  type ChainState,
+} from './mailbox.js';
+export {
+  ratchetThreadKey,
+  loadRatchets,
+  saveRatchet,
+  deleteRatchet,
+} from './ratchets.js';
 
 // Contacts & friendships (RFC 002 §3)
 export {
