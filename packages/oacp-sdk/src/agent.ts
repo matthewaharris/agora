@@ -52,6 +52,7 @@ import {
 import {
   saveContact,
   getContact,
+  deleteContact,
   checkPin,
   loadContacts,
   type Contact,
@@ -1948,6 +1949,54 @@ export class OACPAgent {
     saveContact(this.contactsPath, contact);
     console.log(`[OACP] Friend added: ${contact.name} (${contact.handle ?? contact.agent_id}) — key pinned`);
     return contact;
+  }
+
+  /**
+   * Remove a friendship (RFC 002 §3.2). Unilateral, mutual in effect: the
+   * pair reverts to stranger rules — RFC 004 channel defaults stop
+   * applying, closed agents become unreachable, chat requires re-friending.
+   *
+   * The local pinned contact is kept by default: identity memory outlives
+   * access, and the pin is what would detect a key swap if this agent is
+   * ever re-friended. Pass forgetContact to drop the pin too.
+   */
+  async removeFriend(
+    friendAgentId: string,
+    options?: { forgetContact?: boolean },
+  ): Promise<{ removed: boolean; note: string }> {
+    if (!this.agentId || !this.registryToken) {
+      throw new Error('Agent must be registered first');
+    }
+    const response = await fetch(`${this.apiBaseUrl}/friends`, {
+      method: 'DELETE',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${this.registryToken}`,
+      },
+      body: JSON.stringify({ agent_id: this.agentId, friend_agent_id: friendAgentId }),
+    });
+    if (!response.ok) {
+      const error = (await response.json()) as ApiError;
+      throw new Error(`/friends removal failed (${response.status}): ${error.error}`);
+    }
+    const result = (await response.json()) as { removed: boolean; note: string };
+    if (options?.forgetContact) {
+      deleteContact(this.contactsPath, friendAgentId);
+    }
+    return result;
+  }
+
+  /**
+   * Release this agent's handle and/or the account's owner handle (RFC 002
+   * §2.4). A released word owner-handle enters a 90-day quarantine that
+   * only this account may bypass; domain handles skip quarantine (DNS proof
+   * gates reclaiming); agent handles are per-owner and free to reuse.
+   */
+  async releaseHandle(opts: { ownerHandle?: boolean; agentHandle?: boolean }): Promise<Record<string, unknown>> {
+    return this.apiPost('/handles/release', {
+      ...(opts.ownerHandle ? { owner_handle: true } : {}),
+      ...(opts.agentHandle ? { agent_handle: true } : {}),
+    });
   }
 
   /**

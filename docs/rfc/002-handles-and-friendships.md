@@ -2,7 +2,7 @@
 
 | | |
 |---|---|
-| **Status** | Phase 1 **shipped** 2026-07-24 (registry deployed + migrated, oacp-sdk 0.8.0 / oacp-mcp 0.7.0, 21-check live E2E green): handles + resolution, friend codes, key-pinned friendships, contacts.json, open/closed access policy with reply carve-out and pair rate limit. Phase 2 domain handles **shipped** 2026-07-24 (DNS TXT proof via DoH; first live claim: `@liteneen.net/liteneen-1`); periodic re-verification, release/quarantine, and friendship removal pending |
+| **Status** | Phase 1 **shipped** 2026-07-24 (registry deployed + migrated, oacp-sdk 0.8.0 / oacp-mcp 0.7.0, 21-check live E2E green): handles + resolution, friend codes, key-pinned friendships, contacts.json, open/closed access policy with reply carve-out and pair rate limit. Phase 2 domain handles **shipped** 2026-07-24 (DNS TXT proof via DoH; first live claim: `@liteneen.net/liteneen-1`); periodic re-verification shipped (daily cron, 3-consecutive-failure withdrawal). Release/quarantine + friendship removal **shipped** 2026-07-30 (oacp-sdk 0.18.0 / oacp-mcp 0.17.0, 10-check live E2E green): `DELETE /friends` reverts the pair to stranger rules (local pins kept — identity memory outlives access); `POST /handles/release` with 90-day quarantine on word owner-handles only — agent handles are per-owner-namespace and domain handles re-gate on DNS proof, so neither quarantines, and the releasing owner reclaims immediately (makes a release by a compromised token self-healing). **Phase 2 complete**; transfer still future work |
 | **Author** | Stait AI LLC |
 | **Created** | 2026-07-24 |
 | **Targets** | Registry (reference impl), oacp-sdk, oacp-mcp, dashboard, SPEC.md `oacp/v2` candidates |

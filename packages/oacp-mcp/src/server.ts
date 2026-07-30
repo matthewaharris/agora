@@ -1284,6 +1284,72 @@ export function buildServer(): { server: McpServer; shutdown: () => Promise<void
     },
   );
 
+  server.registerTool(
+    'oacp_remove_friend',
+    {
+      title: 'Remove a friend',
+      description:
+        'Remove a registry friendship (RFC 002). Takes effect for BOTH sides immediately: the pair reverts to stranger rules — ' +
+        'no chat, structured task_requests only, and if either agent is closed the other cannot reach it at all. ' +
+        'RFC 004 channel defaults (private + sealed) stop applying to new threads. Re-friending requires a fresh friend code from either human. ' +
+        'The locally pinned key is KEPT by default — identity memory outlives access, and the pin is what detects a key swap on re-friending; ' +
+        'pass forget_pin: true to drop it too. Confirm with the human before removing a friend.',
+      inputSchema: {
+        friend_agent_id: z.string().describe('The friend to remove: agent_id or @owner/agent handle'),
+        forget_pin: z
+          .boolean()
+          .optional()
+          .describe('Also delete the locally pinned key for this agent (default false — keep it as identity memory)'),
+      },
+    },
+    async ({ friend_agent_id, forget_pin }) => {
+      try {
+        const a = await requireRegistered();
+        if (friend_agent_id.startsWith('@')) {
+          const resolved = await a.resolveHandle(friend_agent_id);
+          if (!resolved.agent?.agent_id) {
+            return errorResult(`Handle ${friend_agent_id} did not resolve to a single agent (use @owner/agent form)`);
+          }
+          friend_agent_id = resolved.agent.agent_id;
+        }
+        const res = await a.removeFriend(friend_agent_id, { forgetContact: forget_pin });
+        return jsonResult(res);
+      } catch (err) {
+        return errorResult(err instanceof Error ? err.message : String(err));
+      }
+    },
+  );
+
+  server.registerTool(
+    'oacp_release_handle',
+    {
+      title: 'Release this agent\'s handle or the owner handle',
+      description:
+        'Release a claimed handle (RFC 002 §2.4). Releasing the OWNER handle retires the public @name for the whole account: ' +
+        'word handles enter a 90-day anti-phishing quarantine (only this account may reclaim sooner); domain handles skip quarantine because ' +
+        'reclaiming requires DNS proof anyway. Releasing the AGENT handle just frees the name within this owner\'s namespace. ' +
+        'Friends keep working — friendships pin keys, not names. This is hard to take back for word owner-handles once the quarantine ' +
+        'protects it from YOU being re-registered by others after 90 days — confirm with the human first.',
+      inputSchema: {
+        which: z
+          .enum(['agent_handle', 'owner_handle', 'both'])
+          .describe("What to release: 'agent_handle' (this agent's name), 'owner_handle' (the account's @name), or 'both'"),
+      },
+    },
+    async ({ which }) => {
+      try {
+        const a = await requireRegistered();
+        const res = await a.releaseHandle({
+          agentHandle: which === 'agent_handle' || which === 'both',
+          ownerHandle: which === 'owner_handle' || which === 'both',
+        });
+        return jsonResult(res);
+      } catch (err) {
+        return errorResult(err instanceof Error ? err.message : String(err));
+      }
+    },
+  );
+
   // ----------------------------------------------------------
   // oacp_set_access (RFC 002 §3.5)
   // ----------------------------------------------------------

@@ -41,6 +41,16 @@ export function saveContact(filePath: string, contact: Contact): void {
   fs.writeFileSync(resolved, JSON.stringify(contacts, null, 2), { mode: 0o600 });
 }
 
+/** Drop a pinned contact. Returns false if it wasn't pinned. */
+export function deleteContact(filePath: string, agentId: string): boolean {
+  const resolved = path.resolve(filePath);
+  const contacts = loadContacts(resolved);
+  if (!(agentId in contacts)) return false;
+  delete contacts[agentId];
+  fs.writeFileSync(resolved, JSON.stringify(contacts, null, 2), { mode: 0o600 });
+  return true;
+}
+
 export function getContact(filePath: string, agentId: string): Contact | null {
   return loadContacts(filePath)[agentId] ?? null;
 }

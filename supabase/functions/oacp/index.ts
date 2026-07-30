@@ -111,9 +111,11 @@ const RATE_LIMITS: Record<string, { window: number; max: number }> = {
   '/messages/send': { window: 60, max: 30 },
   '/threads/update': { window: 60, max: 30 },
   '/handles/claim': { window: 60, max: 10 },
+  '/handles/release': { window: 60, max: 10 },
   '/friends/code': { window: 60, max: 10 },
   '/friends/redeem': { window: 60, max: 10 },
   '/friends/policy': { window: 60, max: 20 },
+  '/friends': { window: 60, max: 30 },
   '/resolve': { window: 60, max: 60 },
   '/discover': { window: 60, max: 60 },
   '/collect-payment': { window: 60, max: 30 },
@@ -1074,6 +1076,27 @@ async function handleHandlesClaim(req: Request): Promise<Response> {
     if (!isDomain && RESERVED_HANDLES.has(h)) {
       return errorResponse(`Handle "@${h}" is reserved`, 403, { error_code: 'handle_reserved' });
     }
+    // RFC 002 §2.4: released handles cool down for 90 days — except for the
+    // owner who released them, whose immediate reclaim is what makes a
+    // release by a compromised agent token self-healing. Domain handles are
+    // never quarantined (claiming one requires proving DNS control anyway).
+    if (!isDomain) {
+      const { data: q } = await supabase
+        .from('handle_quarantine')
+        .select('released_by_owner, available_at')
+        .eq('handle', h)
+        .maybeSingle();
+      if (q && Date.parse(q.available_at as string) > Date.now()) {
+        if (q.released_by_owner !== agent.owner_id) {
+          return errorResponse(
+            `Handle "@${h}" was recently released and is in its 90-day anti-phishing quarantine (available ${q.available_at}).`,
+            409,
+            { error_code: 'handle_quarantined', available_at: q.available_at },
+          );
+        }
+      }
+      if (q) await supabase.from('handle_quarantine').delete().eq('handle', h);
+    }
     if (owner.handle && owner.handle !== h) {
       return errorResponse(
         `This account already claimed "@${owner.handle}" — release/transfer is not yet supported`,
@@ -1136,6 +1159,133 @@ async function handleHandlesClaim(req: Request): Promise<Response> {
     owner_handle: finalOwnerHandle ? `@${finalOwnerHandle}` : null,
     agent_handle: finalAgentHandle,
     handle: full,
+  });
+}
+
+/**
+ * POST /handles/release — release this agent's handle and/or the owner
+ * handle (RFC 002 §2.4). Body: { agent_id, owner_handle?: true, agent_handle?: true }
+ * Agent auth; owner release requires attachment. A released owner handle
+ * enters the 90-day quarantine (word handles only — see the migration for
+ * why agent and domain handles are exempt); the releasing owner may reclaim
+ * immediately, which keeps a malicious release from being a lockout.
+ */
+async function handleHandlesRelease(req: Request): Promise<Response> {
+  let body: Record<string, unknown>;
+  try {
+    body = await req.json();
+  } catch {
+    return errorResponse('Invalid JSON body', 400);
+  }
+
+  const auth = await requireAgentAuth(req, body.agent_id);
+  if ('error' in auth) return auth.error;
+  const agent = auth.agent;
+
+  const releaseOwner = body.owner_handle === true;
+  const releaseAgent = body.agent_handle === true;
+  if (!releaseOwner && !releaseAgent) {
+    return errorResponse('Set owner_handle: true and/or agent_handle: true to release', 400);
+  }
+
+  const supabase = getSupabaseAdmin();
+  const result: Record<string, unknown> = {};
+
+  if (releaseAgent) {
+    if (!agent.handle) {
+      result.agent_handle = { released: false, note: 'This agent has no handle' };
+    } else {
+      await supabase.from('agents').update({ handle: null }).eq('agent_id', agent.agent_id);
+      result.agent_handle = { released: true, was: agent.handle };
+    }
+  }
+
+  if (releaseOwner) {
+    if (!agent.owner_id) {
+      return errorResponse('Owner-handle release requires an attached owner account', 403, {
+        error_code: 'no_owner_account',
+      });
+    }
+    const { data: owner } = await supabase
+      .from('owners')
+      .select('owner_id, handle')
+      .eq('owner_id', agent.owner_id)
+      .single();
+    if (!owner?.handle) {
+      result.owner_handle = { released: false, note: 'This account has no owner handle' };
+    } else {
+      const h = owner.handle as string;
+      const isDomain = h.includes('.');
+      await supabase
+        .from('owners')
+        .update({ handle: null, domain_verified_at: null, updated_at: new Date().toISOString() })
+        .eq('owner_id', agent.owner_id);
+      if (!isDomain) {
+        await supabase.from('handle_quarantine').upsert({
+          handle: h,
+          released_by_owner: agent.owner_id,
+          released_at: new Date().toISOString(),
+          available_at: new Date(Date.now() + 90 * 24 * 3600 * 1000).toISOString(),
+        });
+      }
+      console.log(`[OACP] Owner handle @${h} released by ${agent.name}${isDomain ? '' : ' (90-day quarantine)'}`);
+      result.owner_handle = {
+        released: true,
+        was: `@${h}`,
+        ...(isDomain
+          ? { note: 'Domain handle — no quarantine; reclaiming requires DNS proof.' }
+          : { quarantined_until: new Date(Date.now() + 90 * 24 * 3600 * 1000).toISOString(),
+              note: 'Anyone else must wait out the 90-day quarantine; this account may reclaim immediately.' }),
+      };
+    }
+  }
+
+  return jsonResponse(result);
+}
+
+/**
+ * DELETE /friends — remove a friendship edge (RFC 002 §3.2, formerly v1.1).
+ * Body: { agent_id, friend_agent_id }. Agent auth; either side may remove.
+ * Unilateral and mutual in effect: the pair reverts to stranger rules —
+ * RFC 004 channel defaults stop applying, closed agents become unreachable,
+ * chat requires re-friending. Local pinned contacts are a client matter
+ * (identity memory outlives access), so the registry does not touch them.
+ */
+async function handleFriendRemove(req: Request): Promise<Response> {
+  let body: Record<string, unknown>;
+  try {
+    body = await req.json();
+  } catch {
+    return errorResponse('Invalid JSON body', 400);
+  }
+
+  const auth = await requireAgentAuth(req, body.agent_id);
+  if ('error' in auth) return auth.error;
+  const agent = auth.agent;
+
+  const friendId = body.friend_agent_id as string | undefined;
+  if (!friendId || !validateUUID(friendId)) {
+    return errorResponse('friend_agent_id (UUID) is required', 400);
+  }
+
+  const { lo, hi } = friendPair(agent.agent_id as string, friendId);
+  const supabase = getSupabaseAdmin();
+  const { data: removed } = await supabase
+    .from('friendships')
+    .delete()
+    .eq('agent_lo', lo)
+    .eq('agent_hi', hi)
+    .select('created_at');
+
+  const wasFriends = (removed ?? []).length > 0;
+  if (wasFriends) {
+    console.log(`[OACP] Friendship removed: ${agent.agent_id} ⇷ ${friendId}`);
+  }
+  return jsonResponse({
+    removed: wasFriends,
+    ...(wasFriends
+      ? { note: 'The pair now follows stranger rules: no chat, structured task_requests only, closed agents unreachable. Re-friending requires a new friend code.' }
+      : { note: 'No friendship existed between these agents.' }),
   });
 }
 
@@ -3979,6 +4129,10 @@ const routes: Record<string, Record<string, RouteHandler>> = {
   },
   '/friends': {
     GET: (req) => handleFriendsList(req),
+    DELETE: (req) => handleFriendRemove(req),
+  },
+  '/handles/release': {
+    POST: (req) => handleHandlesRelease(req),
   },
   '/friends/policy': {
     POST: (req) => handleFriendPolicy(req),

@@ -23,7 +23,7 @@
  * ```
  */
 
-export const VERSION = '0.17.0';
+export const VERSION = '0.18.0';
 
 // Main agent class
 export { OACPAgent } from './agent.js';
@@ -131,6 +131,7 @@ export {
   loadContacts,
   saveContact,
   getContact,
+  deleteContact,
   checkPin,
   type Contact,
 } from './contacts.js';
