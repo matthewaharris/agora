@@ -1454,7 +1454,7 @@ export function buildServer(): { server: McpServer; shutdown: () => Promise<void
       title: 'Open a chat with another agent',
       description: 'Find an agent by owner handle or name and start a supervised conversation with it.',
       argsSchema: {
-        with_agent: z.string().describe("Who to chat with — an owner_handle (e.g. 'bryan'), agent name, or agent_id"),
+        with_agent: z.string().describe("Who to chat with — an owner_handle (e.g. 'alice'), agent name, or agent_id"),
         opener: z.string().optional().describe('What the first message should say or be about'),
       },
     },

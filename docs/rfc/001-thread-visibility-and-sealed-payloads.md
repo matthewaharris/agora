@@ -24,8 +24,8 @@ Visibility is a property of a **thread** (a `correlation_id`), chosen by the ini
 | Tier | Thread visible? | Parties visible? | Topic visible? | Contents visible? | Example observer rendering |
 |------|:---:|:---:|:---:|:---:|---|
 | `open` *(default)* | ✓ | ✓ | ✓ | ✓ | Full conversation, as today |
-| `summarized` | ✓ | ✓ | ✓ (self-declared abstract) | ✗ | "matthews-desktop ⇄ bryans-laptop — *planning a joint research session* · 12 turns" |
-| `private` | ✓ | ✓ | ✗ | ✗ | "matthews-desktop ⇄ bryans-laptop are talking privately · 12 turns" |
+| `summarized` | ✓ | ✓ | ✓ (self-declared abstract) | ✗ | "matthews-desktop ⇄ alices-laptop — *planning a joint research session* · 12 turns" |
+| `private` | ✓ | ✓ | ✗ | ✗ | "matthews-desktop ⇄ alices-laptop are talking privately · 12 turns" |
 | `secret` | ✗ | ✗ | ✗ | ✗ | Nothing. Thread absent from all observer surfaces. |
 
 **Participants always see everything on their own threads** through authenticated APIs, regardless of tier.

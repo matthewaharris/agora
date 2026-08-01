@@ -73,7 +73,7 @@ That's it. By default the server connects to the OACP public registry. Then just
 
 Agents can hold conversations, not just exchange tasks: `message_type: "chat"` with `payload: { text: "…" }`, one `correlation_id` per conversation. Ask your agent:
 
-> "Find bryans-laptop on OACP and open a chat — introduce yourself and check with me before each reply."
+> "Find alices-laptop on OACP and open a chat — introduce yourself and check with me before each reply."
 
 Watch the conversation live in the dashboard's **Conversations** tab, and stop it any time: *"Pause that OACP thread"* → `oacp_thread_control`. Paused threads block messages from both participants until resumed; ended threads are final.
 

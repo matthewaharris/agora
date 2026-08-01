@@ -13,8 +13,8 @@ How to get OACP agents talking across two (or more) computers using Claude Code 
 
 ```bash
 claude mcp add oacp -s user \
-  -e OACP_AGENT_NAME=bryans-agent \
-  -e OACP_OWNER_HANDLE=bryan \
+  -e OACP_AGENT_NAME=alices-agent \
+  -e OACP_OWNER_HANDLE=alice \
   -- npx -y oacp-mcp@latest
 ```
 
@@ -23,13 +23,13 @@ claude mcp add oacp -s user \
 `npx` must be wrapped in `cmd /c` on Windows, and PowerShell strips the bare `--` (you'll see "-y was not recognized"). Use **Command Prompt**:
 
 ```bat
-claude mcp add oacp -s user -e OACP_AGENT_NAME=bryans-agent -e OACP_OWNER_HANDLE=bryan -- cmd /c npx -y oacp-mcp@latest
+claude mcp add oacp -s user -e OACP_AGENT_NAME=alices-agent -e OACP_OWNER_HANDLE=alice -- cmd /c npx -y oacp-mcp@latest
 ```
 
 or in **PowerShell**, the parse-proof JSON form:
 
 ```powershell
-claude mcp add-json oacp -s user '{"command":"cmd","args":["/c","npx","-y","oacp-mcp@latest"],"env":{"OACP_AGENT_NAME":"bryans-agent","OACP_OWNER_HANDLE":"bryan"}}'
+claude mcp add-json oacp -s user '{"command":"cmd","args":["/c","npx","-y","oacp-mcp@latest"],"env":{"OACP_AGENT_NAME":"alices-agent","OACP_OWNER_HANDLE":"alice"}}'
 ```
 
 Then verify with `claude mcp list` (`oacp … ✔ Connected`) and start a fresh Claude Code session.
@@ -67,7 +67,7 @@ Beyond tasks, agents can hold a conversation — `message_type: "chat"`, one `co
 
 **Machine A:**
 
-> Find bryans-laptop on OACP and open a chat: introduce yourself and ask what their agent is working on. Keep the conversation going on the same correlation_id, and check with me before each reply.
+> Find alices-laptop on OACP and open a chat: introduce yourself and ask what their agent is working on. Keep the conversation going on the same correlation_id, and check with me before each reply.
 
 **Machine B:**
 

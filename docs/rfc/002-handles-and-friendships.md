@@ -32,7 +32,7 @@ Display names deliberately stay non-unique: global name uniqueness at scale prod
 - Format: `@[a-z0-9][a-z0-9-]{1,30}[a-z0-9]` (lowercase, digits, inner hyphens; 3–32 chars). Case-insensitive, stored lowercase.
 - **Registry-unique and claimed.** `POST /handles/claim` with an owner handle. *Implementation note (2026-07-24): RFC 003 owner accounts shipped first, so claims bind to the **owner account** (`owners.handle`) rather than a bare key family — an attached agent claims on its owner's behalf, and every agent attached to that account resolves under the handle. Agents without an owner account cannot claim (drives attachment, which is the verification §8.1 asked about).*
 - v1 claiming is **first-come-first-served** with a reserved list (common first names are NOT reserved; brands, protocol terms — `oacp`, `liteneen`, `admin`, `registry` — are).
-- The legacy `owner_handle` free-text field is untouched for compatibility but demoted to a display hint; the dashboard shows verified handles distinctly (e.g. `@bryan` vs. grey unverified text).
+- The legacy `owner_handle` free-text field is untouched for compatibility but demoted to a display hint; the dashboard shows verified handles distinctly (e.g. `@alice` vs. grey unverified text).
 
 ### 2.1 One owner, many agents
 
@@ -40,7 +40,7 @@ An owner claims once and attaches each of their agents. Attachment proof = a sig
 
 ### 2.2 Agent handles
 
-Scoped under the owner: `@matt/desktop`, `@bryan/analyst`. Unique only within the owner's namespace — no global collision pressure. Grammar: same charset as owner handles, 1–32 chars after the slash.
+Scoped under the owner: `@matt/desktop`, `@alice/analyst`. Unique only within the owner's namespace — no global collision pressure. Grammar: same charset as owner handles, 1–32 chars after the slash.
 
 ### 2.3 Resolution
 
@@ -60,11 +60,11 @@ Scoped under the owner: `@matt/desktop`, `@bryan/analyst`. Unique only within th
 A "friend" is an address-book entry binding a handle to a **pinned public key**:
 
 ```json
-{ "handle": "@bryan/analyst", "agent_id": "c98b4621-…", "public_key": "31c0…", "pinned_at": "2026-07-24T…", "note": "Bryan — analyst agent" }
+{ "handle": "@alice/analyst", "agent_id": "c98b4621-…", "public_key": "31c0…", "pinned_at": "2026-07-24T…", "note": "Alice — analyst agent" }
 ```
 
 - **Trust-on-first-use** (TOFU): resolve the handle once, pin the key. Every later interaction verifies the counterparty's messages against the *pinned* key, not whatever the registry currently says. This is the SSH known-hosts / Signal safety-number model.
-- **Key-change warning:** if `@bryan/analyst` ever resolves to a different key, the SDK surfaces a warning and the MCP tool asks the human before continuing. Handles are convenience; keys are truth.
+- **Key-change warning:** if `@alice/analyst` ever resolves to a different key, the SDK surfaces a warning and the MCP tool asks the human before continuing. Handles are convenience; keys are truth.
 - Storage is **local-first**: `~/.oacp/contacts.json` next to the keypair. An optional registry-side copy (sealed with the owner's own key per RFC 001 §4 — the registry can hold it but not read it) enables multi-machine sync later.
 - **Trust-policy integration:** the SDK's existing `TrustPolicy` allowlist accepts contact entries, so "only accept task_requests from friends" is one config line. Unilateral TOFU pinning remains available (an address book, not a social graph); *mutual* friendships are established with friend codes (§3.1).
 
@@ -74,9 +74,9 @@ MCP surface: `oacp_friend_code` (mint), `oacp_add_friend` (redeem a code, or res
 
 The strongest link in the chain is the two humans, so use it. Modeled on RFC 003 attach codes:
 
-1. Matt: *"give me a friend code for Bryan"* → his agent calls `POST /friends/code` → a single-use code (e.g. `KQ4-7NF`, 15-minute expiry) bound to the minting agent.
-2. Matt texts the code to Bryan — the out-of-band hop **is** the human approval step.
-3. Bryan: *"add my friend with code KQ4-7NF"* → his agent calls `POST /friends/redeem` → the registry records a **mutual friendship edge** between the two agents, and each side pins the other's current public key (locally in `contacts.json`, and in the registry edge).
+1. Matt: *"give me a friend code for Alice"* → his agent calls `POST /friends/code` → a single-use code (e.g. `KQ4-7NF`, 15-minute expiry) bound to the minting agent.
+2. Matt texts the code to Alice — the out-of-band hop **is** the human approval step.
+3. Alice: *"add my friend with code KQ4-7NF"* → their agent calls `POST /friends/redeem` → the registry records a **mutual friendship edge** between the two agents, and each side pins the other's current public key (locally in `contacts.json`, and in the registry edge).
 
 Because the humans coordinated out of band, a malicious registry cannot man-in-the-middle the first resolution — the TOFU caveat in §5 applies only to pin-by-handle, not to code-established friendships. Friend codes require no handles at all (they work between anonymous agents), so they ship independently of §2.
 
@@ -113,7 +113,7 @@ An owner who controls a DNS name can use it as their handle: publish `_oacp.acme
 
 ## 5. Security considerations
 
-- **Homoglyph/squat resistance:** charset is ASCII-only lowercase, eliminating Unicode confusables. Levenshtein-close handles to popular ones can be flagged in the dashboard ("did you mean @bryan?") rather than blocked.
+- **Homoglyph/squat resistance:** charset is ASCII-only lowercase, eliminating Unicode confusables. Levenshtein-close handles to popular ones can be flagged in the dashboard ("did you mean @alice?") rather than blocked.
 - **The registry is not trusted for identity.** Handles make discovery friendly; pinned keys make relationships safe. A malicious/compromised registry can lie about handle→key bindings exactly once per friendship (at first resolution) — the TOFU tradeoff, mitigated by out-of-band confirmation for high-stakes contacts (compare public keys, as humans already do for Signal).
 - **Key rotation** is out of scope here (it's an identity-layer concern for a future RFC); §2.4's loud re-pointing behavior is deliberately conservative until rotation exists.
 
