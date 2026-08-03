@@ -539,12 +539,32 @@ function validationErrorResponse(errors: ValidationError[]): Response {
 /**
  * GET /health — Health check
  */
-function handleHealth(): Response {
+async function handleHealth(): Promise<Response> {
+  // Sweep freshness lets an external monitor distinguish "the registry
+  // answers HTTP" from "the background sweep is actually running" — the
+  // latter failed silently for weeks before this existed. Never let the
+  // status read break health itself.
+  let sweep: Record<string, unknown> = {};
+  try {
+    const { data } = await getSupabaseAdmin()
+      .from('system_status')
+      .select('updated_at')
+      .eq('key', 'last_sweep')
+      .maybeSingle();
+    if (data?.updated_at) {
+      const ageS = Math.round((Date.now() - Date.parse(data.updated_at as string)) / 1000);
+      sweep = { sweep_last_run_at: data.updated_at, sweep_age_seconds: ageS };
+    } else {
+      sweep = { sweep_last_run_at: null };
+    }
+  } catch { /* health stays up even if the status table is unhappy */ }
+
   return jsonResponse({
     status: 'ok',
     version: OACP_VERSION,
     protocol: 'oacp',
     timestamp: new Date().toISOString(),
+    ...sweep,
   });
 }
 

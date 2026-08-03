@@ -96,6 +96,35 @@ async function recheckDomainHandles(): Promise<Record<string, unknown>> {
   return { checked, still_valid: stillValid, unverified, failing };
 }
 
+/**
+ * Ops alerting: page the operator's Telegram when a sweep component fails.
+ * Deduped through system_status (one alert per key per hour) — a broken
+ * reaper at 2 a.m. should be one message, not one hundred and twenty.
+ * Alerting must never break the sweep, so every path here swallows errors.
+ */
+async function notifyOps(key: string, text: string): Promise<void> {
+  try {
+    const token = Deno.env.get('TELEGRAM_BOT_TOKEN');
+    const chat = Deno.env.get('OACP_OPS_TELEGRAM_CHAT');
+    if (!token || !chat) return;
+    const supabase = getSupabaseAdmin();
+    const dedupeKey = `ops_alert:${key}`;
+    const { data: prev } = await supabase
+      .from('system_status').select('updated_at').eq('key', dedupeKey).maybeSingle();
+    if (prev && Date.now() - Date.parse(prev.updated_at as string) < 3600_000) return;
+    await supabase.from('system_status').upsert({
+      key: dedupeKey, value: { text }, updated_at: new Date().toISOString(),
+    });
+    await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ chat_id: chat, text: `🔴 OACP registry: ${text}` }),
+    });
+  } catch (err) {
+    console.error('[OACP-CRON] notifyOps failed (non-fatal):', err);
+  }
+}
+
 Deno.serve(async (req: Request) => {
   if (req.method === 'OPTIONS') {
     return handleCors();
@@ -108,6 +137,7 @@ Deno.serve(async (req: Request) => {
 
     if (error) {
       console.error('[OACP-CRON] Error calling oacp_mark_offline_agents:', error);
+      await notifyOps('mark_offline', `offline-detection RPC failing: ${error.message}`);
       return errorResponse('Failed to run offline check', 500);
     }
 
@@ -120,7 +150,11 @@ Deno.serve(async (req: Request) => {
     // (two indexed UPDATEs), so it runs on every sweep rather than waiting
     // for a daily job — a burn-after-read payload lingering for hours would
     // defeat the point of asking for it.
-    const { data: reaped } = await supabase.rpc('oacp_reap_expired_payloads');
+    const { data: reaped, error: reapError } = await supabase.rpc('oacp_reap_expired_payloads');
+    if (reapError) {
+      console.error('[OACP-CRON] Payload reaper failed:', reapError);
+      await notifyOps('payload_reaper', `payload reaper failing — TTL/burn promises are NOT being honored: ${reapError.message}`);
+    }
     const reapResult = reaped as Record<string, number> | null;
     if (reapResult && (reapResult.expired > 0 || reapResult.burned > 0)) {
       console.log(
@@ -144,6 +178,19 @@ Deno.serve(async (req: Request) => {
     const domains = url.searchParams.get('domains') === '1'
       ? await recheckDomainHandles()
       : undefined;
+
+    // Liveness stamp: /health exposes this so an external monitor can tell
+    // "the registry answers" apart from "the sweep is actually running" —
+    // the failure mode this system just spent weeks silently in.
+    await supabase.from('system_status').upsert({
+      key: 'last_sweep',
+      value: {
+        agents_marked_offline: affected,
+        ...(reapResult ? { reaped: reapResult } : {}),
+        ...(mailboxDeleted > 0 ? { mailbox_deleted: mailboxDeleted } : {}),
+      },
+      updated_at: new Date().toISOString(),
+    });
 
     return jsonResponse({
       status: 'ok',
