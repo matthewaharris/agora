@@ -18,7 +18,7 @@ import {
   mailboxEpoch,
   OACP_PUBLIC_REGISTRY_URL,
   OACP_PUBLIC_REGISTRY_KEY,
-} from '../packages/oacp-sdk/dist/index.js';
+} from 'oacp-sdk';
 import { mkdirSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';

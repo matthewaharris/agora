@@ -80,15 +80,6 @@ echo -e "  ✅ Supabase credentials found"
 echo -e "     URL: ${SUPABASE_URL}"
 
 # =============================================================================
-# Build SDK
-# =============================================================================
-echo -e "\n${BLUE}Building OACP SDK...${NC}"
-cd packages/oacp-sdk
-npm run build 2>&1 | tail -1 || true
-cd ../..
-echo -e "  ✅ SDK built"
-
-# =============================================================================
 # Install Agent Dependencies
 # =============================================================================
 echo -e "\n${BLUE}Installing agent dependencies...${NC}"

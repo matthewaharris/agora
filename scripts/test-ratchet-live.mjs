@@ -16,7 +16,7 @@ import {
   saveContact,
   loadRatchets,
   OACP_PUBLIC_REGISTRY_URL,
-} from '../packages/oacp-sdk/dist/index.js';
+} from 'oacp-sdk';
 import { mkdirSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';

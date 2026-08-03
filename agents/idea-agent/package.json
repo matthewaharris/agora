@@ -9,7 +9,7 @@
     "dev": "tsx watch index.ts"
   },
   "dependencies": {
-    "oacp-sdk": "file:../../packages/oacp-sdk",
+    "oacp-sdk": "^0.19.1",
     "dotenv": "^16.4.0"
   },
   "devDependencies": {

@@ -14,7 +14,7 @@
  *
  * Usage: SUPABASE_ACCESS_TOKEN=… node scripts/test-rfc002-phase2-live.mjs
  */
-import { OACPAgent } from '../packages/oacp-sdk/dist/index.js';
+import { OACPAgent } from 'oacp-sdk';
 import { mkdirSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';

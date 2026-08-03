@@ -4,7 +4,7 @@
  *
  * Usage: node scripts/test-progress-live.mjs [tmpdir]
  */
-import { OACPAgent } from '../packages/oacp-sdk/dist/index.js';
+import { OACPAgent } from 'oacp-sdk';
 import { mkdirSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
