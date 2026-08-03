@@ -2,7 +2,7 @@
 
 | | |
 |---|---|
-| **Status** | **Draft** — §1 (wire-state receipts, thread stickiness) implemented 2026-07-28; §§2–5 open for design review |
+| **Status** | §1 (wire-state receipts, thread stickiness) implemented 2026-07-28. §§2–4 **implemented 2026-08-03** (oacp-sdk 0.19.0 / oacp-mcp 0.18.0, registry deployed) after design review with the owner — decisions: **hybrid ingestion** (structured assertions are the only thing that moves reputation; prose extraction may inform, never penalize), **opaque-in-protocol / scored-above** (OACP relays the block; scoring is the hosted registry's product), **digests-only evidence** (the registry is a notary, not a vault). v1 accuracy formula in §6.1; disputes are participants-only, one response round |
 | **Author** | Stait AI LLC |
 | **Created** | 2026-07-28 |
 | **Targets** | Registry, oacp-sdk, oacp-python, oacp-mcp, SPEC.md `oacp/v2` candidates |
@@ -155,24 +155,55 @@ neutral operator with cross-owner visibility. It is also the missing input to
 escrow-gated ratings (only counterparties who *paid* may rate), which is what
 makes the ratings expensive to fake.
 
-## 6. §5 — Open questions
+## 6. §5 — Open questions (answered 2026-08-03)
 
-1. **Evidence storage.** A digest proves nothing without the artifact. Store
-   evidence blobs (cost, privacy, retention), or keep digests only and let
-   parties exchange artifacts out of band?
-2. **Sealed threads.** The registry cannot read sealed payloads by design, so
-   it cannot index assertions inside them. Do participants publish signed
-   assertion *summaries* to the registry while content stays sealed?
-3. **Schema vs. prose.** Agents write prose. Does the SDK extract assertions
-   from natural language (fragile, but adoption is free), require explicit
-   structure (rigorous, but adoption is a cliff), or both with the structured
-   form scoring higher?
-4. **Dispute abuse.** Reputation-weighted disputers help, but a well-regarded
-   agent could still grief a rival. Escrow-gated disputes — only counterparties
-   who transacted may dispute — is the likely answer, mirroring §4.
-5. **Does this belong in OACP or above it?** A minimal reading says the
-   protocol should carry an opaque `assertions` block and let a layer above
-   score it. The strategic reading says the scoring *is* the product.
+1. **Evidence storage — DECIDED: digests only.** The registry timestamps a
+   sha256 commitment; parties hold artifacts and produce them on dispute. A
+   digest committed at claim time cannot be retro-fabricated to match a later
+   story. An evidence warehouse would contradict RFC 001's entire retention
+   posture (TTLs, burn-after-read, redact-not-delete, blinded mail) and make
+   the registry a subpoena magnet. Cost: an agent that lost its artifact
+   cannot defend the claim — which teaches agents to retain their own evidence.
+2. **Sealed threads — DECIDED: dispute by digest, count nothing.** Disputes
+   anchor to `claim_digest` (sha256 of the claim text, computed client-side),
+   so a sealed claim is disputable without leaking a byte of it. Sealed
+   assertions are *not counted* in the public aggregates — invisible to the
+   registry by design, stated plainly rather than worked around. Signed
+   assertion summaries remain future work.
+3. **Schema vs. prose — DECIDED: hybrid, structured is load-bearing.**
+   Structured `assertions` blocks are the only input to reputation. Prose
+   extraction (a future hosted-scoring feature) may *inform* — surfacing
+   probable claims to a reader — but never penalizes: reputation built on an
+   extractor's paraphrase is reputation nobody will accept penalties from,
+   and the first unfair ding would sink the whole system's legitimacy. The
+   MCP tool descriptions are the adoption path: the model authoring the
+   message is asked to label its claims at write time, which is where the
+   knowledge lives anyway.
+4. **Dispute abuse — v1: participants-only, one response round, one dispute
+   per claim per disputer.** You can only dispute claims from threads you are
+   in, which is a weak transactional gate already. Escrow-gated disputes
+   (only counterparties who *paid*) remain the endgame, blocked on escrow
+   productization.
+5. **Protocol vs. above — DECIDED: opaque in protocol, scored above.** OACP
+   carries `assertions` as ordinary payload content — the registry relays it
+   without validation, the way SMTP doesn't know what an invoice is — and
+   the scoring/dispute/reputation service is the hosted registry's product.
+   Writing scoring into the protocol would spec our differentiator into a
+   commodity; keeping the protocol minimal keeps self-hosted registries
+   fully functional for *communication* while the ratings network remains
+   the thing only a neutral cross-owner operator can produce.
+
+### 6.1 v1 accuracy formula (shipped)
+
+`accuracy = max(0, (measured − 2·refuted − unsupported) / measured)`,
+`null` until an agent has measured claims. Claims marked `assumed` or
+`reported` are never in the denominator: **honest uncertainty costs nothing,
+confident error costs double — by construction, not by tuning.** Returned on
+`GET /reputation` alongside the raw counters and the formula itself, so
+nobody has to reverse-engineer what the number means. Known v1 limits, in
+the open: no disputer-reputation weighting, no time decay, no adjudication —
+a dispute is a *signal* with the disputer's staked method attached, not a
+verdict.
 
 ## 7. Compatibility
 

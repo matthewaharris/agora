@@ -135,6 +135,9 @@ const RATE_LIMITS: Record<string, { window: number; max: number }> = {
   // /messages/send; fetch is a poll and gets read-endpoint headroom.
   '/mailbox/deposit': { window: 60, max: 30 },
   '/mailbox': { window: 60, max: 60 },
+  '/assertions/dispute': { window: 60, max: 10 },
+  '/assertions/respond': { window: 60, max: 10 },
+  '/assertions/disputes': { window: 60, max: 60 },
 };
 
 /**
@@ -2071,6 +2074,14 @@ async function handleMessageSend(req: Request): Promise<Response> {
     `[OACP] Message ${message.message_id} sent: ${sender.name} → ${recipient.name} (${body.message_type})`,
   );
 
+  // RFC 007 §2: count well-formed assertions for the scoring layer. The
+  // protocol treats the block as opaque payload content — nothing here
+  // validates or rejects the send; malformed entries are simply not
+  // counted. Sealed payloads carry assertions inside the ciphertext and
+  // are invisible to this by design. Fire-and-forget: scoring bookkeeping
+  // must never delay or fail a send.
+  void countAssertions(senderAgentId, body.payload as Record<string, unknown>);
+
   // RFC 006 Phase 2: a held message needs a HUMAN, not the agent — tell them.
   // Fire-and-forget so notification latency never delays the send response.
   if (deliveryStatus === 'quarantined') {
@@ -3544,7 +3555,35 @@ async function handleGetReputation(req: Request): Promise<Response> {
     if (error || !data) {
       return jsonResponse({ agent_id: agentId, score: 0.5, tasks_completed: 0, tasks_failed: 0, message: 'No reputation data yet' });
     }
-    return jsonResponse(data);
+
+    // RFC 007 §4: accuracy and calibration. Dispute aggregates come from
+    // assertion_disputes; assertion totals were counted at ingest. The v1
+    // formula is deliberately simple and stated in the response so nobody
+    // has to reverse-engineer it: refuted-measured claims weigh DOUBLE,
+    // and 'assumed' claims are not in the denominator at all — honest
+    // uncertainty never costs anything, confident error costs twice.
+    const { data: disputes } = await supabase
+      .from('assertion_disputes')
+      .select('verdict, response')
+      .eq('disputed_agent_id', agentId);
+    const refuted = (disputes ?? []).filter((d) => d.verdict === 'refuted').length;
+    const unsupported = (disputes ?? []).filter((d) => d.verdict === 'unsupported').length;
+    const answered = (disputes ?? []).filter((d) => d.response !== null).length;
+    const measured = (data.assertions_measured as number) ?? 0;
+    const accuracy = measured > 0
+      ? Math.max(0, (measured - 2 * refuted - unsupported) / measured)
+      : null;
+    return jsonResponse({
+      ...data,
+      assertion_accuracy: accuracy,
+      disputes_received: (disputes ?? []).length,
+      disputes_refuted: refuted,
+      disputes_unsupported: unsupported,
+      disputes_answered: answered,
+      accuracy_note:
+        'v1 heuristic (RFC 007 §4): accuracy = (measured − 2·refuted − unsupported) / measured. ' +
+        "Claims marked 'assumed' or 'reported' are never in the denominator — honest uncertainty outscores confident error by construction.",
+    });
   }
 
   // Leaderboard — top agents by score
@@ -3556,6 +3595,221 @@ async function handleGetReputation(req: Request): Promise<Response> {
     .limit(limit);
 
   return jsonResponse({ leaderboard: data || [] });
+}
+
+// ============================================================
+// Assertions & disputes (RFC 007 §§2-3)
+// ============================================================
+
+const ASSERTION_STATUSES = ['measured', 'reported', 'assumed', 'refuted'];
+const CLAIM_DIGEST_RE = /^sha256:[0-9a-f]{64}$/;
+
+/**
+ * Count well-formed assertions in an unsealed payload for the §4 scoring
+ * aggregates. Never throws to the caller; the send already succeeded and
+ * the block is protocol-opaque — bookkeeping failure is a log line.
+ */
+async function countAssertions(senderAgentId: string, payload: Record<string, unknown> | undefined): Promise<void> {
+  try {
+    if (!payload || payload.sealed === true) return;
+    const list = payload.assertions;
+    if (!Array.isArray(list) || list.length === 0) return;
+    let total = 0, measured = 0, assumed = 0, reported = 0;
+    for (const a of list.slice(0, 64)) {
+      if (typeof a?.claim !== 'string' || !ASSERTION_STATUSES.includes(a?.status)) continue;
+      total++;
+      if (a.status === 'measured') measured++;
+      else if (a.status === 'assumed') assumed++;
+      else if (a.status === 'reported') reported++;
+    }
+    if (total === 0) return;
+    const supabase = getSupabaseAdmin();
+    const { data: existing } = await supabase
+      .from('reputation')
+      .select('assertions_total, assertions_measured, assertions_assumed, assertions_reported')
+      .eq('agent_id', senderAgentId)
+      .maybeSingle();
+    await supabase.from('reputation').upsert({
+      agent_id: senderAgentId,
+      assertions_total: ((existing?.assertions_total as number) ?? 0) + total,
+      assertions_measured: ((existing?.assertions_measured as number) ?? 0) + measured,
+      assertions_assumed: ((existing?.assertions_assumed as number) ?? 0) + assumed,
+      assertions_reported: ((existing?.assertions_reported as number) ?? 0) + reported,
+    }, { onConflict: 'agent_id' });
+  } catch (err) {
+    console.error('[OACP] Assertion count failed (non-fatal):', err);
+  }
+}
+
+/** Structural check of a dispute/response assertion. Returns an error string or null. */
+// deno-lint-ignore no-explicit-any
+function invalidDisputeAssertion(a: any, verdict?: string): string | null {
+  if (typeof a !== 'object' || a === null) return 'assertion object is required';
+  if (typeof a.claim !== 'string' || a.claim.length === 0 || a.claim.length > 500) {
+    return 'assertion.claim must be a non-empty string (≤500 chars)';
+  }
+  if (!ASSERTION_STATUSES.includes(a.status)) {
+    return `assertion.status must be one of ${ASSERTION_STATUSES.join('|')}`;
+  }
+  if (!a.method && !a.basis) return 'assertion must state a method or basis';
+  if (verdict === 'refuted' && (a.status !== 'measured' || !a.method)) {
+    return "a 'refuted' verdict requires a 'measured' counter-assertion with a method — you cannot refute a measurement with a vibe";
+  }
+  return null;
+}
+
+/**
+ * POST /assertions/dispute — dispute one claim of a message (RFC 007 §3).
+ * Body: { agent_id, message_id, claim_index, claim_digest, verdict, assertion }
+ * Participants of the message only; the claim itself never travels (the
+ * digest anchors it), so sealed-thread claims are disputable without leaks.
+ */
+async function handleAssertionDispute(req: Request): Promise<Response> {
+  let body: Record<string, unknown>;
+  try { body = await req.json(); } catch { return errorResponse('Invalid JSON body', 400); }
+
+  const auth = await requireAgentAuth(req, body.agent_id);
+  if ('error' in auth) return auth.error;
+  const agent = auth.agent;
+
+  const messageId = body.message_id as string;
+  const claimIndex = body.claim_index;
+  const claimDigest = body.claim_digest as string;
+  const verdict = body.verdict as string;
+  if (!messageId || !validateUUID(messageId)) return errorResponse('message_id (UUID) is required', 400);
+  if (typeof claimIndex !== 'number' || claimIndex < 0 || claimIndex > 63) {
+    return errorResponse('claim_index must be an integer 0-63', 400);
+  }
+  if (!CLAIM_DIGEST_RE.test(claimDigest ?? '')) {
+    return errorResponse('claim_digest must look like "sha256:<64 hex>" (the sha256 of the disputed claim text)', 400);
+  }
+  if (verdict !== 'refuted' && verdict !== 'unsupported') {
+    return errorResponse("verdict must be 'refuted' or 'unsupported'", 400);
+  }
+  const assertionError = invalidDisputeAssertion(body.assertion, verdict);
+  if (assertionError) return errorResponse(assertionError, 400, { error_code: 'dispute_needs_evidence' });
+
+  const supabase = getSupabaseAdmin();
+  const { data: msg } = await supabase
+    .from('messages')
+    .select('message_id, sender_agent_id, recipient_agent_id')
+    .eq('message_id', messageId)
+    .maybeSingle();
+  if (!msg) return errorResponse('Message not found', 404);
+  if (msg.sender_agent_id !== agent.agent_id && msg.recipient_agent_id !== agent.agent_id) {
+    return errorResponse('Only participants of the message may dispute its claims', 403, {
+      error_code: 'not_a_participant',
+    });
+  }
+  if (msg.sender_agent_id === agent.agent_id) {
+    return errorResponse(
+      "These are this agent's own claims — correct them with a follow-up message carrying a 'refuted' assertion instead of a dispute",
+      400,
+      { error_code: 'cannot_dispute_own_claims' },
+    );
+  }
+
+  const { data: dispute, error: insertError } = await supabase
+    .from('assertion_disputes')
+    .insert({
+      message_id: messageId,
+      claim_index: claimIndex,
+      claim_digest: claimDigest,
+      disputed_agent_id: msg.sender_agent_id,
+      disputer_agent_id: agent.agent_id,
+      verdict,
+      assertion: body.assertion,
+    })
+    .select('dispute_id, created_at')
+    .single();
+  if (insertError) {
+    if (insertError.code === '23505') {
+      return errorResponse('This agent already disputed that claim', 409, { error_code: 'already_disputed' });
+    }
+    console.error('[OACP] Dispute insert failed:', insertError);
+    return errorResponse('Failed to record dispute', 500);
+  }
+
+  console.log(`[OACP] Assertion disputed: msg ${messageId}[${claimIndex}] ${verdict} by ${agent.name}`);
+  return jsonResponse({
+    dispute_id: dispute.dispute_id,
+    created_at: dispute.created_at,
+    note:
+      'Dispute recorded against the claim author and reflected in their reputation aggregates. ' +
+      'They may respond once with counter-evidence (POST /assertions/respond).',
+  }, 201);
+}
+
+/**
+ * POST /assertions/respond — the disputed agent's one counter-evidence round.
+ * Body: { agent_id, dispute_id, assertion }
+ */
+async function handleAssertionRespond(req: Request): Promise<Response> {
+  let body: Record<string, unknown>;
+  try { body = await req.json(); } catch { return errorResponse('Invalid JSON body', 400); }
+
+  const auth = await requireAgentAuth(req, body.agent_id);
+  if ('error' in auth) return auth.error;
+  const agent = auth.agent;
+
+  const disputeId = body.dispute_id as string;
+  if (!disputeId || !validateUUID(disputeId)) return errorResponse('dispute_id (UUID) is required', 400);
+  const assertionError = invalidDisputeAssertion(body.assertion);
+  if (assertionError) return errorResponse(assertionError, 400, { error_code: 'response_needs_evidence' });
+
+  const supabase = getSupabaseAdmin();
+  const { data: dispute } = await supabase
+    .from('assertion_disputes')
+    .select('dispute_id, disputed_agent_id, response')
+    .eq('dispute_id', disputeId)
+    .maybeSingle();
+  if (!dispute) return errorResponse('Dispute not found', 404);
+  if (dispute.disputed_agent_id !== agent.agent_id) {
+    return errorResponse('Only the disputed agent may respond', 403);
+  }
+  if (dispute.response !== null) {
+    return errorResponse('This dispute already has a response (one round in v1)', 409, {
+      error_code: 'already_responded',
+    });
+  }
+
+  await supabase
+    .from('assertion_disputes')
+    .update({ response: body.assertion, responded_at: new Date().toISOString() })
+    .eq('dispute_id', disputeId);
+  return jsonResponse({ responded: true });
+}
+
+/**
+ * GET /assertions/disputes?agent_id=&message_id= — a message's disputes.
+ * Agent auth; participants of the message only.
+ */
+async function handleAssertionDisputesList(req: Request): Promise<Response> {
+  const url = new URL(req.url);
+  const agentId = url.searchParams.get('agent_id');
+  const messageId = url.searchParams.get('message_id');
+  if (!agentId || !messageId) return errorResponse('agent_id and message_id are required', 400);
+
+  const auth = await requireAgentAuth(req, agentId);
+  if ('error' in auth) return auth.error;
+
+  const supabase = getSupabaseAdmin();
+  const { data: msg } = await supabase
+    .from('messages')
+    .select('sender_agent_id, recipient_agent_id')
+    .eq('message_id', messageId)
+    .maybeSingle();
+  if (!msg) return errorResponse('Message not found', 404);
+  if (msg.sender_agent_id !== agentId && msg.recipient_agent_id !== agentId) {
+    return errorResponse('Only participants of the message may read its disputes', 403);
+  }
+
+  const { data: disputes } = await supabase
+    .from('assertion_disputes')
+    .select('*')
+    .eq('message_id', messageId)
+    .order('created_at', { ascending: true });
+  return jsonResponse({ disputes: disputes ?? [], count: (disputes ?? []).length });
 }
 
 // ============================================================
@@ -4200,6 +4454,15 @@ const routes: Record<string, Record<string, RouteHandler>> = {
   },
   '/reputation': {
     GET: (req) => handleGetReputation(req),
+  },
+  '/assertions/dispute': {
+    POST: (req) => handleAssertionDispute(req),
+  },
+  '/assertions/respond': {
+    POST: (req) => handleAssertionRespond(req),
+  },
+  '/assertions/disputes': {
+    GET: (req) => handleAssertionDisputesList(req),
   },
   '/webhooks/register': {
     POST: (req) => handleRegisterWebhook(req),

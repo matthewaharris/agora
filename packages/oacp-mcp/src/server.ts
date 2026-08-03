@@ -14,7 +14,7 @@ import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { z } from 'zod';
 import * as os from 'os';
 import * as path from 'path';
-import { OACPAgent, type MessageEnvelope, type MessageType } from 'oacp-sdk';
+import { OACPAgent, type MessageEnvelope, type MessageType, type Assertion } from 'oacp-sdk';
 
 const MESSAGE_TYPES = ['task_request', 'task_ack', 'task_progress', 'task_result', 'task_error', 'chat'] as const;
 
@@ -149,8 +149,25 @@ function frameInboxMessage(m: MessageEnvelope) {
     : payload;
 
   const who = describeSender(senderInfo, m.sender_agent_id);
+  // RFC 007 §2: surface the sender's claim labels without trusting them —
+  // the statuses are self-declared data, summarized here so the model
+  // notices 'reported' hearsay and disputable 'measured' claims.
+  const assertionList = Array.isArray(payload.assertions) ? payload.assertions as Array<Record<string, unknown>> : [];
+  const statusCounts = assertionList.reduce<Record<string, number>>((acc, a) => {
+    if (typeof a?.status === 'string') acc[a.status] = (acc[a.status] ?? 0) + 1;
+    return acc;
+  }, {});
   return {
     ...base,
+    ...(assertionList.length > 0
+      ? {
+          assertions_note:
+            `Sender attached ${assertionList.length} labeled assertion(s) inside the payload ` +
+            `(${Object.entries(statusCounts).map(([k, v]) => `${v} ${k}`).join(', ')}). ` +
+            "Statuses are SELF-DECLARED: 'reported' means the sender relays without vouching; treat 'assumed' as unverified; " +
+            "a 'measured' claim that does not hold up can be disputed with oacp_dispute_assertion.",
+        }
+      : {}),
     ...(quarantined
       ? {
           quarantined: true,
@@ -448,9 +465,28 @@ export function buildServer(): { server: McpServer; shutdown: () => Promise<void
           .describe(
             "RFC 001 §5: destroy the payload once the recipient has fetched it (with a short grace window for retries). Combine with seal for secrets that should exist exactly once. The recipient's client should save what it needs on first read.",
           ),
+        assertions: z
+          .array(z.object({
+            claim: z.string().max(500).describe('One discrete factual claim, stated so it can be true or false'),
+            status: z
+              .enum(['measured', 'reported', 'assumed', 'refuted'])
+              .describe("How you know it: 'measured' = you performed an observation and this is its result; 'reported' = another party told you, you relay without vouching; 'assumed' = inferred, no observation; 'refuted' = you checked and it is false"),
+            method: z.string().max(300).optional().describe('For measured/refuted: what observation you performed'),
+            basis: z.string().max(300).optional().describe('For reported/assumed: where this came from / what it rests on'),
+            evidence_digest: z.string().optional().describe('sha256 commitment to the supporting artifact, "sha256:<hex>" — commits you to evidence you can produce if disputed'),
+            observed_at: z.string().optional().describe('When the observation was made, ISO 8601'),
+          }))
+          .max(64)
+          .optional()
+          .describe(
+            'RFC 007 §2: label your factual claims with how you know them. Attach these whenever reporting task results or state ' +
+            "('the migration is applied', 'tests pass', 'their side is deployed'). BE HONEST about status — marking assumptions as " +
+            "'measured' is the confident-error pattern the reputation system penalizes hardest; an honest 'assumed' never costs anything. " +
+            'Counterparties can dispute specific claims, and measured-claim survival is a public reputation number.',
+          ),
       },
     },
-    async ({ recipient_agent_id, message_type, payload, correlation_id, seal, visibility, public_summary, new_topic, ttl_seconds, burn_after_read }) => {
+    async ({ recipient_agent_id, message_type, payload, correlation_id, seal, visibility, public_summary, new_topic, ttl_seconds, burn_after_read, assertions }) => {
       try {
         const a = await requireRegistered();
         // Handle recipients (RFC 002): resolve @owner/agent to the card and
@@ -497,6 +533,7 @@ export function buildServer(): { server: McpServer; shutdown: () => Promise<void
             publicSummary: public_summary,
             ttlSeconds: ttl_seconds,
             burnAfterRead: burn_after_read,
+            assertions: assertions as Assertion[] | undefined,
           },
         );
 
@@ -1159,6 +1196,68 @@ export function buildServer(): { server: McpServer; shutdown: () => Promise<void
             ? 'Thread keys destroyed. Ratcheted history in this thread is now permanently undecryptable on this side. The peer should end their side too.'
             : 'No ratchet state existed for that peer/thread on this machine — nothing to destroy.',
         });
+      } catch (err) {
+        return errorResult(err instanceof Error ? err.message : String(err));
+      }
+    },
+  );
+
+  // ----------------------------------------------------------
+  // oacp_dispute_assertion (RFC 007 §3)
+  // ----------------------------------------------------------
+  server.registerTool(
+    'oacp_dispute_assertion',
+    {
+      title: 'Dispute, answer, or list assertion disputes',
+      description:
+        "Accountability for factual claims (RFC 007 §3). 'dispute' challenges one specific claim of a message you received — " +
+        "unlike oacp_flag_message (hostility), a dispute says a STATEMENT WAS WRONG, and you must stake your own evidence: " +
+        "verdict 'refuted' requires that you actually performed a contradicting observation (a measured counter-assertion with a method) — you cannot refute a measurement with a vibe. " +
+        "Use verdict 'unsupported' when the claim's evidence does not back it. Disputes hit the claim author's public accuracy score, so dispute what you verified, not what you doubt. " +
+        "'respond' is the disputed side's one counter-evidence round; 'list' shows a message's disputes (participants only). " +
+        'The disputed claim text never leaves this machine — only its sha256 anchor is sent, so sealed-thread claims are disputable without leaking them.',
+      inputSchema: {
+        action: z.enum(['dispute', 'respond', 'list']).describe('dispute a claim | respond to a dispute against you | list a message\'s disputes'),
+        message_id: z.string().optional().describe("For 'dispute'/'list': the message whose claim is at issue"),
+        claim_index: z.number().int().min(0).max(63).optional().describe("For 'dispute': which entry in the message's assertions array"),
+        claim: z.string().optional().describe("For 'dispute': the exact claim text being disputed (hashed locally; never sent)"),
+        verdict: z.enum(['refuted', 'unsupported']).optional().describe("For 'dispute': refuted = you measured the opposite; unsupported = the evidence does not back it"),
+        dispute_id: z.string().optional().describe("For 'respond': the dispute being answered"),
+        assertion: z
+          .object({
+            claim: z.string().max(500),
+            status: z.enum(['measured', 'reported', 'assumed', 'refuted']),
+            method: z.string().max(300).optional(),
+            basis: z.string().max(300).optional(),
+            evidence_digest: z.string().optional(),
+            observed_at: z.string().optional(),
+          })
+          .optional()
+          .describe("For 'dispute'/'respond': YOUR OWN assertion backing the dispute or response — status, method, evidence digest"),
+      },
+    },
+    async ({ action, message_id, claim_index, claim, verdict, dispute_id, assertion }) => {
+      try {
+        const a = await requireRegistered();
+        if (action === 'dispute') {
+          if (!message_id || claim_index === undefined || !claim || !verdict || !assertion) {
+            return errorResult("action 'dispute' requires message_id, claim_index, claim, verdict, and assertion");
+          }
+          const res = await a.disputeAssertion(message_id, claim_index, {
+            claim,
+            verdict,
+            assertion: assertion as Assertion,
+          });
+          return jsonResult(res);
+        }
+        if (action === 'respond') {
+          if (!dispute_id || !assertion) return errorResult("action 'respond' requires dispute_id and assertion");
+          const res = await a.respondToDispute(dispute_id, assertion as Assertion);
+          return jsonResult(res);
+        }
+        if (!message_id) return errorResult("action 'list' requires message_id");
+        const res = await a.getDisputes(message_id);
+        return jsonResult(res);
       } catch (err) {
         return errorResult(err instanceof Error ? err.message : String(err));
       }

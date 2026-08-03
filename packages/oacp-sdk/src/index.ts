@@ -23,7 +23,7 @@
  * ```
  */
 
-export const VERSION = '0.18.0';
+export const VERSION = '0.19.0';
 
 // Main agent class
 export { OACPAgent } from './agent.js';
@@ -125,6 +125,17 @@ export {
   saveRatchet,
   deleteRatchet,
 } from './ratchets.js';
+
+// Assertions & disputes (RFC 007 §§2-3)
+export {
+  digestEvidence,
+  claimDigest,
+  validateAssertions,
+  ASSERTION_STATUSES,
+  type Assertion,
+  type AssertionStatus,
+  type AssertionDispute,
+} from './assertions.js';
 
 // Contacts & friendships (RFC 002 §3)
 export {

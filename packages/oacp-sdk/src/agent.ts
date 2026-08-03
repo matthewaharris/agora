@@ -83,6 +83,12 @@ import {
   saveRatchet,
   deleteRatchet,
 } from './ratchets.js';
+import {
+  validateAssertions,
+  claimDigest,
+  type Assertion,
+  type AssertionDispute,
+} from './assertions.js';
 import type {
   RegisterResponse,
   ReregisterResponse,
@@ -686,10 +692,27 @@ export class OACPAgent {
       ttlSeconds?: number;
       /** RFC 001 §5: destroy the payload once the recipient has fetched it. */
       burnAfterRead?: boolean;
+      /**
+       * RFC 007 §2: discrete claims labeled with how this agent knows them
+       * (measured/reported/assumed/refuted). Validated client-side; merged
+       * into the payload, so on sealed threads they travel inside the
+       * ciphertext. Structured assertions are what reputation scores.
+       */
+      assertions?: Assertion[];
     },
   ): Promise<string> {
     if (!this.agentId || !this.registryToken) {
       throw new Error('Agent must be registered before sending messages');
+    }
+
+    // RFC 007 §2: assertions ride inside the payload (and therefore inside
+    // the seal). Validation throws on structural violations; weak-but-legal
+    // assertions get loud warnings, because 'measured' with no method is
+    // exactly the confident-error pattern §4 exists to penalize.
+    if (options?.assertions) {
+      const warnings = validateAssertions(options.assertions);
+      for (const w of warnings) console.warn(`[OACP] ${w}`);
+      payload = { ...payload, assertions: options.assertions };
     }
 
     // RFC 004: private-by-default — seal to friends unless told otherwise.
@@ -840,10 +863,58 @@ export class OACPAgent {
       ttlSeconds?: number;
       /** RFC 001 §5: destroy the payload once the recipient has fetched it. */
       burnAfterRead?: boolean;
+      /** RFC 007 §2: labeled claims (see send()). */
+      assertions?: Assertion[];
     },
   ): Promise<SendReceipt> {
     await this.send(recipientId, messageType, payload, options);
     return this.lastReceipt as SendReceipt;
+  }
+
+  /**
+   * Dispute one claim of a message this agent participated in (RFC 007 §3).
+   *
+   * A dispute is itself an assertion and carries this agent's own status
+   * and method — you cannot refute a measurement with a vibe, and the
+   * registry rejects a 'refuted' verdict whose counter-assertion is not a
+   * described measurement. The claim text stays local: only its sha256
+   * anchor is sent, so disputing a sealed-thread claim leaks nothing.
+   */
+  async disputeAssertion(
+    messageId: string,
+    claimIndex: number,
+    dispute: { claim: string; verdict: 'refuted' | 'unsupported'; assertion: Assertion },
+  ): Promise<{ dispute_id: string; note?: string }> {
+    validateAssertions([dispute.assertion]);
+    return this.apiPost('/assertions/dispute', {
+      message_id: messageId,
+      claim_index: claimIndex,
+      claim_digest: claimDigest(dispute.claim),
+      verdict: dispute.verdict,
+      assertion: dispute.assertion,
+    });
+  }
+
+  /** Answer a dispute against this agent with counter-evidence (one round in v1). */
+  async respondToDispute(disputeId: string, assertion: Assertion): Promise<{ responded: boolean }> {
+    validateAssertions([assertion]);
+    return this.apiPost('/assertions/respond', { dispute_id: disputeId, assertion });
+  }
+
+  /** Disputes on a message this agent participated in (RFC 007 §3). */
+  async getDisputes(messageId: string): Promise<{ disputes: AssertionDispute[] }> {
+    if (!this.agentId || !this.registryToken) {
+      throw new Error('Agent must be registered first');
+    }
+    const response = await fetch(
+      `${this.apiBaseUrl}/assertions/disputes?agent_id=${this.agentId}&message_id=${encodeURIComponent(messageId)}`,
+      { headers: { Authorization: `Bearer ${this.registryToken}` } },
+    );
+    if (!response.ok) {
+      const error = (await response.json()) as ApiError;
+      throw new Error(`Dispute list failed (${response.status}): ${error.error}`);
+    }
+    return response.json() as Promise<{ disputes: AssertionDispute[] }>;
   }
 
   /** The receipt from this agent's most recent send (see sendChecked). */
