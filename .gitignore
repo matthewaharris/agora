@@ -42,3 +42,7 @@ Thumbs.db
 .gsd/activity/
 .npmrc
 deploy-secrets.local.txt
+
+# Any owner/agent keypair regardless of location or naming
+owner-keypair.json
+**/owner-keypair.json
