@@ -36,7 +36,12 @@ export interface FleetOptions {
   stateDir?: string;
 }
 
-export async function bootFleet(options: FleetOptions = {}): Promise<Map<string, OACPAgent>> {
+export interface Fleet {
+  agents: Map<string, OACPAgent>;
+  shutdown: () => Promise<void>;
+}
+
+export async function bootFleet(options: FleetOptions = {}): Promise<Fleet> {
   const seed = process.env.FLEET_MASTER_SEED;
   if (!isValidMasterSeed(seed)) {
     throw new Error('FLEET_MASTER_SEED must be set to 32 bytes as 64 hex chars');
@@ -81,6 +86,7 @@ export async function bootFleet(options: FleetOptions = {}): Promise<Map<string,
     const agentId = await agent.register();
     console.log(`🏠 ${name} registered as ${agentId} (pk ${agent.getPublicKey().slice(0, 16)}…)`);
     agent.startHeartbeat();
+    await resident.init?.(agent);
     agents.set(name, agent);
 
     if (residents.length > 1) {
@@ -88,11 +94,13 @@ export async function bootFleet(options: FleetOptions = {}): Promise<Map<string,
     }
   }
 
-  return agents;
-}
-
-export async function shutdownFleet(agents: Map<string, OACPAgent>): Promise<void> {
-  await Promise.allSettled([...agents.values()].map((agent) => agent.shutdown()));
+  return {
+    agents,
+    shutdown: async () => {
+      for (const resident of residents) resident.stop?.();
+      await Promise.allSettled([...agents.values()].map((agent) => agent.shutdown()));
+    },
+  };
 }
 
 // ============================================================
@@ -111,12 +119,12 @@ async function main() {
     console.error('⚠️ Uncaught exception (continuing):', err);
   });
 
-  const agents = await bootFleet();
-  console.log(`\n⏳ ${agents.size} resident(s) online, waiting for tasks... (Ctrl+C to stop)\n`);
+  const fleet = await bootFleet();
+  console.log(`\n⏳ ${fleet.agents.size} resident(s) online, waiting for tasks... (Ctrl+C to stop)\n`);
 
   const shutdown = async () => {
     console.log('\n🛑 Shutting down fleet...');
-    await shutdownFleet(agents);
+    await fleet.shutdown();
     process.exit(0);
   };
   process.on('SIGINT', shutdown);

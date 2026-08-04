@@ -5,8 +5,12 @@
  * hosting from index.ts, LLM access from the shared gate in llm.ts. Adding
  * an agent to the network = adding an entry here.
  */
-import type { ActionSpec, MessageEnvelope, ModelInfo } from 'oacp-sdk';
+import type { OACPAgent, ActionSpec, MessageEnvelope, ModelInfo } from 'oacp-sdk';
 import { createProtocolExpert } from './residents/protocol-expert.js';
+import { createConcierge } from './residents/concierge.js';
+import { createCodeReviewer } from './residents/code-review.js';
+import { createTranslator } from './residents/translator.js';
+import { createScribe } from './residents/scribe.js';
 
 export interface ResidentAction {
   spec: ActionSpec;
@@ -27,8 +31,19 @@ export interface Resident {
   maxRequestsPerDay?: number;
   dailyFreeBudget?: number;
   actions: ResidentAction[];
+  /** Called after the resident's agent registers — for residents that need
+   * their own agent handle (discovery, proactive sends, timers). */
+  init?: (agent: OACPAgent) => void | Promise<void>;
+  /** Called on fleet shutdown; clear timers and background work here. */
+  stop?: () => void;
 }
 
 export function buildRoster(): Resident[] {
-  return [createProtocolExpert()];
+  return [
+    createProtocolExpert(),
+    createConcierge(),
+    createCodeReviewer(),
+    createTranslator(),
+    createScribe(),
+  ];
 }

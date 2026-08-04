@@ -29,7 +29,7 @@ import { fileURLToPath } from 'node:url';
 import { OACPAgent, digestEvidence } from 'oacp-sdk';
 
 const ROOT = resolve(fileURLToPath(import.meta.url), '../..');
-const { bootFleet, shutdownFleet } = await import(join(ROOT, 'agents/fleet-host/index.ts'));
+const { bootFleet } = await import(join(ROOT, 'agents/fleet-host/index.ts'));
 const { deriveKeypair } = await import(join(ROOT, 'agents/fleet-host/src/identity.ts'));
 const { loadCorpus } = await import(join(ROOT, 'agents/fleet-host/src/retrieval.ts'));
 
@@ -61,7 +61,7 @@ const fleet = await bootFleet({
   extraCapabilities: [SCRATCH_CAP],
   stateDir: TMP,
 });
-const expert = fleet.get(`${PREFIX}oacp-protocol-expert`);
+const expert = fleet.agents.get(`${PREFIX}oacp-protocol-expert`);
 const client = new OACPAgent({
   name: `${PREFIX}fleet-client`,
   capabilities: [SCRATCH_CAP],
@@ -158,7 +158,7 @@ if (after > before) {
 }
 
 // --- teardown + registry cleanup ---
-await shutdownFleet(fleet);
+await fleet.shutdown();
 await client.shutdown();
 
 function managementToken() {
