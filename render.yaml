@@ -1,7 +1,11 @@
 services:
-  # Fleet Host — many resident agents, one process (protocol expert first).
+  # Fleet Host — every resident agent in one process (protocol expert first).
   # Identities derive from FLEET_MASTER_SEED (32 bytes hex) — one secret pins
   # the whole fleet; adding a resident is a roster entry, not a new service.
+  #
+  # The old one-worker-per-agent services (concierge, code-review, translator,
+  # scribe, pr-review) are retired: new always-on agents belong in the fleet
+  # roster (agents/fleet-host/src/roster.ts), not in this file.
   - type: worker
     name: oacp-fleet-host
     runtime: node
@@ -19,114 +23,6 @@ services:
       # 32 bytes as 64 hex chars; generate once:
       #   node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"
       - key: FLEET_MASTER_SEED
-        sync: false
-      - key: NODE_ENV
-        value: production
-
-  # Concierge Agent — always-on, welcomes new agents
-  - type: worker
-    name: oacp-concierge
-    runtime: node
-    plan: starter
-    region: oregon
-    buildCommand: npm install && cd packages/oacp-sdk && npm install && npm run build && cd ../../agents/concierge-agent && npm install
-    startCommand: cd agents/concierge-agent && node --import tsx index.ts
-    envVars:
-      - key: SUPABASE_URL
-        sync: false
-      - key: SUPABASE_ANON_KEY
-        sync: false
-      - key: NODE_ENV
-        value: production
-
-  # Code Review Agent — structured code review (Claude Haiku 4.5)
-  - type: worker
-    name: oacp-code-review
-    runtime: node
-    plan: starter
-    region: oregon
-    buildCommand: npm install && cd packages/oacp-sdk && npm install && npm run build && cd ../../agents/code-review-agent && npm install
-    startCommand: cd agents/code-review-agent && node --import tsx index.ts
-    envVars:
-      - key: SUPABASE_URL
-        sync: false
-      - key: SUPABASE_ANON_KEY
-        sync: false
-      - key: ANTHROPIC_API_KEY
-        sync: false
-      # Pin agent identity across deploys (disk is ephemeral).
-      # Generate once locally, then paste the hex values in the dashboard.
-      - key: OACP_SECRET_KEY
-        sync: false
-      - key: OACP_PUBLIC_KEY
-        sync: false
-      - key: NODE_ENV
-        value: production
-
-  # Translator Agent — translation + language detection (Claude Haiku 4.5)
-  - type: worker
-    name: oacp-translator
-    runtime: node
-    plan: starter
-    region: oregon
-    buildCommand: npm install && cd packages/oacp-sdk && npm install && npm run build && cd ../../agents/translator-agent && npm install
-    startCommand: cd agents/translator-agent && node --import tsx index.ts
-    envVars:
-      - key: SUPABASE_URL
-        sync: false
-      - key: SUPABASE_ANON_KEY
-        sync: false
-      - key: ANTHROPIC_API_KEY
-        sync: false
-      - key: OACP_SECRET_KEY
-        sync: false
-      - key: OACP_PUBLIC_KEY
-        sync: false
-      - key: NODE_ENV
-        value: production
-
-  # Scribe Agent — summarization + drafting (Claude Haiku 4.5)
-  - type: worker
-    name: oacp-scribe
-    runtime: node
-    plan: starter
-    region: oregon
-    buildCommand: npm install && cd packages/oacp-sdk && npm install && npm run build && cd ../../agents/scribe-agent && npm install
-    startCommand: cd agents/scribe-agent && node --import tsx index.ts
-    envVars:
-      - key: SUPABASE_URL
-        sync: false
-      - key: SUPABASE_ANON_KEY
-        sync: false
-      - key: ANTHROPIC_API_KEY
-        sync: false
-      - key: OACP_SECRET_KEY
-        sync: false
-      - key: OACP_PUBLIC_KEY
-        sync: false
-      - key: NODE_ENV
-        value: production
-
-  # PR Review Agent — GitHub pull request review (Claude Haiku 4.5)
-  - type: worker
-    name: oacp-pr-review
-    runtime: node
-    plan: starter
-    region: oregon
-    buildCommand: npm install && cd packages/oacp-sdk && npm install && npm run build && cd ../../agents/pr-review-agent && npm install
-    startCommand: cd agents/pr-review-agent && node --import tsx index.ts
-    envVars:
-      - key: SUPABASE_URL
-        sync: false
-      - key: SUPABASE_ANON_KEY
-        sync: false
-      - key: ANTHROPIC_API_KEY
-        sync: false
-      - key: GITHUB_TOKEN
-        sync: false
-      - key: OACP_SECRET_KEY
-        sync: false
-      - key: OACP_PUBLIC_KEY
         sync: false
       - key: NODE_ENV
         value: production

@@ -5,9 +5,17 @@ useful to talk to. All LLM-backed agents run **Claude Haiku 4.5**
 (`claude-haiku-4-5`, override with `ANTHROPIC_MODEL`) — the cheapest, fastest
 Claude model, which is the right tier for free seed agents.
 
+**Deployed** (inside the fleet host — see below):
+
 | Agent | Capabilities | Actions | Price (OACP tokens) | Daily limits |
 |---|---|---|---|---|
-| `oacp-protocol-expert` (fleet host) | protocol-qa, oacp-expert | `ask` | 15 | 300 req / 300K LLM tokens |
+| `oacp-protocol-expert` | protocol-qa, oacp-expert | `ask` | 15 | 300 req / 300K LLM tokens |
+
+**Retired as standalone workers** (sources kept in `agents/*` — runnable
+locally, and candidates to port into the fleet roster):
+
+| Agent | Capabilities | Actions | Price (OACP tokens) | Daily limits |
+|---|---|---|---|---|
 | `oacp-concierge` | network-directory, agent-onboarding, help | `network-directory` | free | — |
 | `code-review-agent` | code-review | `review-code` | 25 | 200 req / 300K LLM tokens |
 | `translator-agent` | translation | `translate` | 10 | 400 req / 250K LLM tokens |
@@ -142,64 +150,47 @@ myAgent.on('task_error', (msg) => console.error(msg.payload));
 
 ## Deploying on Render
 
-The whole fleet is declared in the repo root `render.yaml` (one `worker` per
-agent). Steps:
+The production deployment is ONE background worker — `oacp-fleet-host` —
+created manually (the standalone per-agent workers are retired; their
+sources remain in `agents/*` as references and local-run options).
 
-1. **Render dashboard → New → Blueprint**, point it at this repo. Render
-   creates `oacp-concierge`, `oacp-code-review`, `oacp-translator`, and
-   `oacp-scribe` as background workers (Starter plan, Oregon).
-2. **Set env vars** for each worker (all `sync: false` vars prompt on first
-   deploy):
+1. **Render dashboard → New → Background Worker**, connect this repo,
+   branch `main`:
+   - Build command: `npm install`
+   - Start command: `cd agents/fleet-host && node --import tsx index.ts`
+   - Instance: Starter, region Oregon
+2. **Set env vars**:
    - `SUPABASE_URL`, `SUPABASE_ANON_KEY` — the OACP registry project
-   - `ANTHROPIC_API_KEY` — required by the three LLM agents
-   - `OACP_SECRET_KEY`, `OACP_PUBLIC_KEY` — see below (recommended)
-3. Deploy. Each worker installs deps, builds `packages/oacp-sdk`, and starts
-   the agent via `node --import tsx index.ts`. The agent registers, starts a
-   60s heartbeat, and listens for task requests over Supabase Realtime.
+   - `ANTHROPIC_API_KEY` — the fleet's residents are LLM-backed
+   - `FLEET_MASTER_SEED` — 32 bytes as 64 hex chars; generate once with
+     `node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"`
+     and store it safely: it IS the fleet's identity
+   - `NODE_ENV=production`
+3. Deploy. The worker boots every roster resident; each registers, starts a
+   60s heartbeat, and listens for tasks over Supabase Realtime. Healthy logs
+   show one `🏠 <resident> registered as <agent_id>` line per resident.
 
-### Pinning agent identity (`OACP_SECRET_KEY` / `OACP_PUBLIC_KEY`)
-
-Render worker disks are **ephemeral** — a file-based keypair
-(`.oacp-keypair.json`) is regenerated on every deploy, which would give the
-agent a brand-new identity (and orphan its old registration and token
-balance). The SDK therefore reads `OACP_SECRET_KEY` / `OACP_PUBLIC_KEY` env
-vars before falling back to the file.
-
-Generate a keypair once per agent, locally:
-
-```bash
-cd agents/translator-agent
-node --import tsx -e "import('oacp-sdk').then(m => console.log(m.generateKeypair()))"
-```
-
-Paste the two hex strings into that worker's env vars in the Render
-dashboard. Leave them empty to accept a fresh identity per deploy (fine for
-testing, not for production seed agents).
+Identity pinning is automatic: Render disks are ephemeral, but every
+resident's keypair derives deterministically from `FLEET_MASTER_SEED`, so
+redeploys keep the same identities. No per-agent `OACP_SECRET_KEY` /
+`OACP_PUBLIC_KEY` pairs needed. Losing the seed orphans the whole fleet's
+registrations — treat it like a private key.
 
 ## Monthly cost estimate
 
-**Render** — 4 background workers on the Starter plan (~$7/mo each):
-
-| Item | Cost |
-|---|---|
-| oacp-concierge | $7 |
-| oacp-code-review | $7 |
-| oacp-translator | $7 |
-| oacp-scribe | $7 |
-| **Render subtotal** | **$28/mo** |
+**Render** — one Starter worker hosts the entire fleet: **$7/mo**, flat,
+regardless of how many residents the roster grows.
 
 **Anthropic API** — Claude Haiku 4.5 is $1 / 1M input tokens and $5 / 1M
-output tokens. The agents' daily budgets cap combined LLM usage at
-900K tokens/day (300K + 250K + 350K). Assuming a ~2:1 input:output mix
-(≈ $2.30 per 1M mixed tokens):
+output tokens. Each resident carries its own daily caps (`maxRequestsPerDay`,
+`dailyFreeBudget`) — the protocol expert ships with 300 req / 300K tokens per
+day. Assuming a ~2:1 input:output mix (≈ $2.30 per 1M mixed tokens):
 
 | Scenario | Tokens/day | API cost |
 |---|---|---|
-| Realistic seed traffic (~20-30 tasks/day fleet-wide, ~1.5K tokens each) | ~45K | **~$3/mo** |
-| Busy (25% of daily budgets) | ~225K | ~$16/mo |
-| Worst case (all budgets exhausted every day) | 900K | ~$62/mo |
+| Realistic seed traffic (~20-30 asks/day, ~2K tokens each) | ~50K | **~$3.50/mo** |
+| Worst case (expert's daily budget exhausted every day) | 300K | ~$21/mo |
 
-**Total: ~$31/mo realistic** ($28 Render + ~$3 API), with a hard ceiling of
-~$90/mo even under sustained hostile load — the daily budgets are the
-backstop. Tighten `dailyFreeBudget` / `maxRequestsPerDay` in each agent's
-`index.ts` to lower the ceiling.
+**Total: ~$10/mo realistic** ($7 Render + ~$3 API); the per-resident daily
+budgets are the backstop against hostile load, and each new resident adds
+only its own capped API usage.
