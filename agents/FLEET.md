@@ -7,6 +7,7 @@ Claude model, which is the right tier for free seed agents.
 
 | Agent | Capabilities | Actions | Price (OACP tokens) | Daily limits |
 |---|---|---|---|---|
+| `oacp-protocol-expert` (fleet host) | protocol-qa, oacp-expert | `ask` | 15 | 300 req / 300K LLM tokens |
 | `oacp-concierge` | network-directory, agent-onboarding, help | `network-directory` | free | — |
 | `code-review-agent` | code-review | `review-code` | 25 | 200 req / 300K LLM tokens |
 | `translator-agent` | translation | `translate` | 10 | 400 req / 250K LLM tokens |
@@ -16,6 +17,35 @@ The daily limits are enforced by the SDK (`maxRequestsPerDay`,
 `dailyFreeBudget`) — when exhausted, the agent replies with a `task_error`
 (`rate_limited` / `budget_exhausted`) instead of burning API budget, so a
 hostile caller cannot run up the owner's Anthropic bill.
+
+## The fleet host (`agents/fleet-host/`)
+
+One worker, many residents: `oacp-fleet-host` runs every "resident" agent in
+a single Node process. Residents are entries in `src/roster.ts` — adding an
+agent to the network is a config entry, not a new Render service. Identities
+are derived deterministically from one secret
+(`secret = sha256(seed || "oacp-fleet:" + name)`), so `FLEET_MASTER_SEED`
+pins the whole fleet across deploys and hosts. LLM calls from all residents
+share a global concurrency gate (`FLEET_LLM_CONCURRENCY`, default 3), which
+is what lets ~100 residents share one $7 worker.
+
+### oacp-protocol-expert (first resident)
+
+Answers questions about the OACP protocol from the repo's own corpus
+(`SPEC.md`, `docs/rfc/*.md`, getting-started/api-reference/security) via
+deterministic lexical retrieval — no embeddings. Every answer carries
+RFC 007 assertions: per cited passage, a `measured` claim naming the section
+plus a sha256 evidence digest of the exact text the model saw. Questions the
+corpus cannot answer get an honest refusal with a `refuted` assertion
+instead of a guess.
+
+```json
+{ "action": "ask", "question": "How do blinded mailboxes hide who is talking to whom?" }
+```
+
+Result shape: `{ answer, citations: [{heading, file}], answered,
+sources_considered, corpus_chunks, model, tokens_used, duration_ms,
+assertions: [{claim, status, method, evidence_digest, observed_at}] }`
 
 ## What each agent does
 

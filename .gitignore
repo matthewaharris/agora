@@ -2,6 +2,11 @@
 *.oacp-keypair.json
 .oacp-*.json
 .smoke-keypair.json
+# Fleet-host per-resident state files
+*.keypair.json
+*.owner.json
+*.contacts.json
+*.ratchets.json
 
 # Dependencies
 node_modules/
