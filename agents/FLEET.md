@@ -14,9 +14,10 @@ All of these run as residents inside the fleet host (one worker — see below):
 | `code-review-agent` | code-review | `review-code` | 25 | 200 req / 300K LLM tokens |
 | `translator-agent` | translation | `translate` | 10 | 400 req / 250K LLM tokens |
 | `scribe-agent` | writing, summarization | `summarize`, `draft` | 10 / 15 | 300 req / 350K LLM tokens |
+| `pr-review-agent` | pr-review, code-review | `review-pr`, `review-diff` | 50 | 100 req / 400K LLM tokens |
 
-(`pr-review-agent` remains a standalone source in `agents/*` — porting it
-into the roster needs `GITHUB_TOKEN` on the fleet worker.)
+(`pr-review-agent` works without `GITHUB_TOKEN` — anonymous GitHub API,
+60 req/hr. Set the owner's token on the fleet worker to lift the limit.)
 
 The daily limits are enforced by the SDK (`maxRequestsPerDay`,
 `dailyFreeBudget`) — when exhausted, the agent replies with a `task_error`
@@ -186,7 +187,7 @@ day. Assuming a ~2:1 input:output mix (≈ $2.30 per 1M mixed tokens):
 | Scenario | Tokens/day | API cost |
 |---|---|---|
 | Realistic seed traffic (~20-30 tasks/day fleet-wide, ~2K tokens each) | ~50K | **~$3.50/mo** |
-| Worst case (every resident's daily budget exhausted every day) | 1.2M | ~$83/mo |
+| Worst case (every resident's daily budget exhausted every day) | 1.6M | ~$110/mo |
 
 **Total: ~$10/mo realistic** ($7 Render + ~$3 API); the per-resident daily
 budgets are the backstop against hostile load, and each new resident adds

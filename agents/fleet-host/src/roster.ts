@@ -11,6 +11,7 @@ import { createConcierge } from './residents/concierge.js';
 import { createCodeReviewer } from './residents/code-review.js';
 import { createTranslator } from './residents/translator.js';
 import { createScribe } from './residents/scribe.js';
+import { createPrReviewer } from './residents/pr-review.js';
 
 export interface ResidentAction {
   spec: ActionSpec;
@@ -45,5 +46,6 @@ export function buildRoster(): Resident[] {
     createCodeReviewer(),
     createTranslator(),
     createScribe(),
+    createPrReviewer(),
   ];
 }
