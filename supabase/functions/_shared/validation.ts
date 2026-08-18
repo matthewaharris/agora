@@ -162,6 +162,116 @@ export function validateSimpleSchema(
 }
 
 /**
+ * Field size limits for the agent card. Registration is unauthenticated by
+ * design, so these are the only bound on what a stranger can write into a row
+ * that every dashboard, SDK and third-party client will later render.
+ */
+const AGENT_CARD_LIMITS: Record<string, number> = {
+  name: 100,
+  description: 500,
+  owner_handle: 64,
+  endpoint_url: 300,
+};
+
+/** Max serialized size of the free-form `metadata` blob. */
+const METADATA_MAX_BYTES = 16_384;
+
+/** Max number of capability tags on one card. */
+const CAPABILITIES_MAX = 32;
+
+// Control characters (C0 + DEL + C1) — never legitimate in a displayed field,
+// and a reliable way to corrupt logs, terminals and list rendering.
+const CONTROL_CHARS = /[\u0000-\u001F\u007F-\u009F]/;
+
+/**
+ * Validate the human-facing fields of an agent card: length, control
+ * characters, and markup in `name`.
+ *
+ * Escaping at every render site is the other half of this and neither
+ * substitutes for the other — the registry cannot assume a client escapes, and
+ * a client cannot assume the registry constrained. See
+ * docs/SECURITY-AUDIT-2026-08-18.md §1–2.
+ */
+export function validateAgentCard(
+  body: Record<string, unknown>,
+): ValidationError[] {
+  const errors: ValidationError[] = [];
+
+  for (const [field, max] of Object.entries(AGENT_CARD_LIMITS)) {
+    const value = body[field];
+    if (value === undefined || value === null) continue;
+    if (typeof value !== 'string') {
+      errors.push({ field, message: `${field} must be a string` });
+      continue;
+    }
+    if (value.length > max) {
+      errors.push({
+        field,
+        message: `${field} must be ${max} characters or fewer`,
+      });
+    }
+    if (CONTROL_CHARS.test(value)) {
+      errors.push({
+        field,
+        message: `${field} must not contain control characters`,
+      });
+    }
+  }
+
+  // `name` is rendered in more places than any other field — keep markup out of
+  // it at the source rather than relying on every renderer downstream.
+  if (typeof body.name === 'string' && /[<>]/.test(body.name)) {
+    errors.push({
+      field: 'name',
+      message: 'name must not contain angle brackets',
+    });
+  }
+
+  if (Array.isArray(body.capabilities)) {
+    if (body.capabilities.length > CAPABILITIES_MAX) {
+      errors.push({
+        field: 'capabilities',
+        message: `at most ${CAPABILITIES_MAX} capabilities`,
+      });
+    }
+    for (const cap of body.capabilities) {
+      if (typeof cap === 'string' && cap.length > 64) {
+        errors.push({
+          field: 'capabilities',
+          message: 'each capability must be 64 characters or fewer',
+        });
+        break;
+      }
+    }
+  }
+
+  if (body.metadata !== undefined && body.metadata !== null) {
+    if (typeof body.metadata !== 'object' || Array.isArray(body.metadata)) {
+      errors.push({ field: 'metadata', message: 'metadata must be an object' });
+    } else {
+      let serialized: string;
+      try {
+        serialized = JSON.stringify(body.metadata);
+      } catch {
+        errors.push({
+          field: 'metadata',
+          message: 'metadata must be JSON-serializable',
+        });
+        return errors;
+      }
+      if (serialized.length > METADATA_MAX_BYTES) {
+        errors.push({
+          field: 'metadata',
+          message: `metadata must be ${METADATA_MAX_BYTES} bytes or smaller when serialized`,
+        });
+      }
+    }
+  }
+
+  return errors;
+}
+
+/**
  * Validate agent_id is a valid UUID.
  */
 export function validateUUID(

@@ -22,6 +22,7 @@ import {
 import {
   validateRequired,
   validateCapabilities,
+  validateAgentCard,
   validatePublicKey,
   validateUUID,
   validateSimpleSchema,
@@ -179,8 +180,11 @@ async function checkRateLimit(
         },
       });
     }
-  } catch {
-    // Fail open
+  } catch (err) {
+    // Fail open on availability grounds — but never silently. A thrown error
+    // here disables rate limiting entirely, which is exactly the condition an
+    // operator needs to know about.
+    console.error('[OACP] Rate limit check threw — failing open:', err);
   }
 
   return null;
@@ -193,9 +197,16 @@ function getRateLimitId(req: Request, body?: Record<string, unknown>): string {
   // Try agent_id from body first
   if (body && typeof body.agent_id === 'string') return `agent:${body.agent_id}`;
   if (body && typeof body.sender_agent_id === 'string') return `agent:${body.sender_agent_id}`;
-  // Fall back to IP
+  // Fall back to IP. X-Forwarded-For accumulates left-to-right and the platform
+  // APPENDS the real client IP, so the last hop is the only one a client cannot
+  // forge. Reading [0] let anyone mint a fresh rate-limit bucket per request by
+  // sending their own X-Forwarded-For — which removed the only admission control
+  // on the unauthenticated blinded-mailbox endpoints (RFC 001 §5.1).
   const forwarded = req.headers.get('x-forwarded-for');
-  const ip = forwarded ? forwarded.split(',')[0].trim() : 'unknown';
+  const hops = forwarded
+    ? forwarded.split(',').map((h) => h.trim()).filter(Boolean)
+    : [];
+  const ip = hops.length > 0 ? hops[hops.length - 1] : 'unknown';
   return `ip:${ip}`;
 }
 
@@ -603,6 +614,14 @@ async function handleRegister(req: Request): Promise<Response> {
   const pkErrors = validatePublicKey(body.public_key);
   if (pkErrors.length > 0) {
     return validationErrorResponse(pkErrors);
+  }
+
+  // Bound the human-facing fields. Registration is unauthenticated, so without
+  // this a stranger controls the size and content of every string the dashboard
+  // and third-party clients later render.
+  const cardErrors = validateAgentCard(body);
+  if (cardErrors.length > 0) {
+    return validationErrorResponse(cardErrors);
   }
 
   const supabase = getSupabaseAdmin();

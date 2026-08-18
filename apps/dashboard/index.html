@@ -2804,12 +2804,12 @@
 
         ${model ? `<div class="modal-field">
           <label>Model</label>
-          <div class="value">${esc(model.provider || '')}/${esc(model.name || '')} [${(model.modalities || []).join(', ')}]</div>
+          <div class="value">${esc(model.provider || '')}/${esc(model.name || '')} [${(model.modalities || []).map(esc).join(', ')}]</div>
         </div>` : ''}
 
         ${langs.length ? `<div class="modal-field">
           <label>Languages</label>
-          <div class="value">${langs.join(', ')}</div>
+          <div class="value">${langs.map(esc).join(', ')}</div>
         </div>` : ''}
 
         <div class="modal-field">
@@ -2956,7 +2956,7 @@
         // Label
         const labelY = node.y + radius + 14;
         const name = node.name.length > 18 ? node.name.substring(0, 16) + '...' : node.name;
-        svg += `<text x="${node.x}" y="${labelY}" text-anchor="middle" fill="${node.isCenter ? '#e4e4e7' : '#71717a'}" font-size="10" font-family="monospace" font-weight="${node.isCenter ? '600' : '400'}">${name}</text>`;
+        svg += `<text x="${node.x}" y="${labelY}" text-anchor="middle" fill="${node.isCenter ? '#e4e4e7' : '#71717a'}" font-size="10" font-family="monospace" font-weight="${node.isCenter ? '600' : '400'}">${esc(name)}</text>`;
         // Icon in center node
         if (node.isCenter) {
           svg += `<text x="${node.x}" y="${node.y + 5}" text-anchor="middle" font-size="14">🤖</text>`;
