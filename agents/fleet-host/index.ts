@@ -16,13 +16,54 @@
  *   FLEET_LLM_CONCURRENCY   max concurrent Anthropic calls (default 3)
  */
 import 'dotenv/config';
+import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { pathToFileURL } from 'node:url';
-import { OACPAgent } from 'oacp-sdk';
-import { deriveKeypair, isValidMasterSeed } from './src/identity.js';
+import { OACPAgent, type OACPKeypair } from 'oacp-sdk';
+import {
+  deriveKeypair,
+  deriveOwnerKeypair,
+  isValidMasterSeed,
+} from './src/identity.js';
 import { buildRoster, type Resident } from './src/roster.js';
 
 const REGISTER_STAGGER_MS = 250;
+
+/**
+ * Place the derived owner keypair on disk before the SDK looks for it.
+ *
+ * The SDK resolves the owner key with `loadOrCreateKeypair`, which has no
+ * config escape hatch — if the file is absent it mints a random key. On hosts
+ * with ephemeral disks that means a new owner identity on every deploy, and
+ * every thread sealed to the old key becomes permanently unreadable. Writing
+ * the derived key first makes the file a cache of the seed rather than the
+ * source of truth.
+ */
+export function pinOwnerKeypair(filePath: string, derived: OACPKeypair): void {
+  const resolved = path.resolve(filePath);
+  fs.mkdirSync(path.dirname(resolved), { recursive: true });
+
+  if (fs.existsSync(resolved)) {
+    try {
+      const existing = JSON.parse(
+        fs.readFileSync(resolved, 'utf-8'),
+      ) as Partial<OACPKeypair>;
+      if (existing.publicKey === derived.publicKey) return; // already pinned
+      // A pre-existing key that is NOT the derived one can still decrypt older
+      // sealed threads, so replacing it is destructive. Say so loudly rather
+      // than repeating the silent-regeneration bug in the other direction.
+      console.warn(
+        `[fleet] ${path.basename(resolved)}: replacing owner key ${existing.publicKey?.slice(0, 8)}… ` +
+          `with seed-derived ${derived.publicKey.slice(0, 8)}…. Threads sealed to the old key ` +
+          `will no longer be readable by this agent's owner.`,
+      );
+    } catch {
+      console.warn(`[fleet] ${path.basename(resolved)}: unreadable, rewriting from seed`);
+    }
+  }
+
+  fs.writeFileSync(resolved, JSON.stringify(derived, null, 2), { mode: 0o600 });
+}
 
 export interface FleetOptions {
   /** Prepended to every resident name (identity derives from the full name) —
@@ -57,6 +98,9 @@ export async function bootFleet(options: FleetOptions = {}): Promise<Fleet> {
 
   for (const resident of residents) {
     const name = `${prefix}${resident.name}`;
+    const ownerKeypairPath = path.join(stateDir, `${name}.owner.json`);
+    // Must happen BEFORE the constructor — the SDK reads this file in it.
+    pinOwnerKeypair(ownerKeypairPath, deriveOwnerKeypair(seed, name));
     const agent = new OACPAgent({
       name,
       capabilities: [...resident.capabilities, ...(options.extraCapabilities ?? [])],
@@ -68,7 +112,7 @@ export async function bootFleet(options: FleetOptions = {}): Promise<Fleet> {
       // Identity comes from the derived keypair; these paths only place the
       // auxiliary state files, one set per resident so they never collide.
       keypairPath: path.join(stateDir, `${name}.keypair.json`),
-      ownerKeypairPath: path.join(stateDir, `${name}.owner.json`),
+      ownerKeypairPath,
       contactsPath: path.join(stateDir, `${name}.contacts.json`),
       ratchetsPath: path.join(stateDir, `${name}.ratchets.json`),
       heartbeatIntervalMs: 60_000,

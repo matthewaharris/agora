@@ -213,6 +213,55 @@ Registration `3757d74d-c476-4a08-9a0f-5e13f2309703` should be deleted, and its o
 
 ---
 
+## 6. HIGH — Fleet owner keys were regenerated on every deploy *(found 2026-08-19, fixed)*
+
+Found while verifying the deploy of findings 1–3, by comparing two `GET /discover` readings eight
+hours apart: **every fleet resident's `owner_public_key` had changed.** All six. The `agent_id`s and
+agent public keys were identical, which rules out a seed rotation or re-registration.
+
+**Mechanism.** `agents/fleet-host/index.ts` derived the *agent* keypair from `FLEET_MASTER_SEED`
+(deterministic, survives anything) but left the *owner* keypair as a file at
+`stateDir/<name>.owner.json`, with `stateDir` defaulting to `'.'`. The `render.yaml` worker declares
+no `disk:`, so its filesystem is ephemeral. Every deploy or restart wiped the file, and the SDK's
+`loadOrCreateKeypair` silently minted a fresh owner key.
+
+The SDK already documents this exact hazard — `resolveKeypair` in `crypto.ts` says config/env
+options exist to "pin the agent's identity on hosts with ephemeral disks (e.g. Render workers),
+where a file-based keypair would be regenerated on every deploy." That escape hatch was built for
+the agent key and never extended to the owner key, which has no `config.ownerKeypair` equivalent.
+
+**Impact.** The owner key decrypts the owner slot of sealed messages (RFC 001 §3.1). Losing it means
+threads sealed to the previous key are **permanently unreadable** — and the dashboard's owner-key
+recovery cannot help, because the key was never backed up. `contacts.json` and `ratchets.json` were
+lost on the same schedule, so pinned friendships would report `key_changed: true` to counterparties
+on every routine deploy. An alarm the README calls "a loud event, never a silent migration" was
+firing as background noise.
+
+**Fix.** `deriveOwnerKeypair()` under a separate label —
+`sha256(seed || "oacp-fleet-owner:" + name)` — and `pinOwnerKeypair()` writes it to the expected
+path (mode `0600`) before the SDK constructor reads it, making the file a cache of the seed rather
+than the source of truth. The two labels are distinct domains deliberately: the agent key travels to
+the registry on every message, so the owner key must not be derivable from it.
+
+Covered by `agents/fleet-host/src/identity.test.mjs` (7 tests, including a pin proving the agent-key
+derivation is byte-identical to the pre-refactor implementation) and
+`owner-key-pinning.test.mjs` (7 tests, including a reproduction of the original bug and proof the
+fix closes it).
+
+**Two things this does NOT fix:**
+
+1. **Owner keys already lost are not recoverable.** Anything sealed to a previous boot's key stays
+   unreadable, and the first deploy carrying this fix drops the current ephemeral keys too. The
+   window is bounded by how much sealed traffic the fleet has handled, which is probably little —
+   residents run `allowedSenders: 'open'` and mostly answer strangers in the clear — but it is not
+   nothing, and it is worth confirming before assuming zero.
+2. **`contacts.json` and `ratchets.json` are still ephemeral.** They hold genuine state that cannot
+   be derived from a seed, so the fix for those is a Render persistent disk with `stateDir` pointed
+   at it. Lower urgency while the fleet forms no friendships, but it needs doing before any resident
+   holds a long-lived sealed relationship.
+
+---
+
 ## What is already right
 
 Worth recording, both because it's true and because it's what an investor's technical diligence
