@@ -77,6 +77,16 @@ export async function complete(options: {
   });
 }
 
+/**
+ * One raw Messages API turn through the fleet-wide concurrency gate — the
+ * model call the agent harness (runtime/harness.ts) loops over.
+ */
+export async function callModel(
+  params: Anthropic.MessageCreateParamsNonStreaming,
+): Promise<Anthropic.Message> {
+  return gate.run(() => getClient().messages.create(params, { timeout: 90_000 }));
+}
+
 /** Extract the first JSON object from LLM output (tolerates markdown fences). */
 export function extractJSON(text: string): Record<string, unknown> | null {
   const match = text.match(/\{[\s\S]*\}/);
