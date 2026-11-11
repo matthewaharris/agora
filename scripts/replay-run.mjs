@@ -8,8 +8,12 @@
  *             "Given exactly what happened, what does my code do?"
  *             Costs nothing and gives the same result every time.
  *
+ *   --model <id>   Tool replay with a different model than the recording
+ *             used, e.g. --model claude-sonnet-5-5. "Would another model
+ *             have handled this same situation better?"
+ *
  * Usage (from the repo root):
- *   node --import tsx scripts/replay-run.mjs <run> [--full]
+ *   node --import tsx scripts/replay-run.mjs <run> [--full | --model <id>]
  * where <run> is a .jsonl file, or a run ID to read from the trajectory
  * database (TRAJECTORY_DB_URL / TRAJECTORY_DB_KEY). Tool replay needs
  * ANTHROPIC_API_KEY.
@@ -27,9 +31,15 @@ const { createReplayModel, createReplayTools, readDatabaseRun, readJsonlRun } = 
 
 const args = process.argv.slice(2);
 const full = args.includes('--full');
-const source = args.find((a) => !a.startsWith('--'));
-if (!source) {
-  console.error('Usage: node --import tsx scripts/replay-run.mjs <run .jsonl | run ID> [--full]');
+const modelAt = args.indexOf('--model');
+const modelOverride = modelAt >= 0 ? args[modelAt + 1] : undefined;
+const source = args.find((a, i) => !a.startsWith('--') && (modelAt < 0 || i !== modelAt + 1));
+if (!source || (modelAt >= 0 && (!modelOverride || modelOverride.startsWith('--')))) {
+  console.error('Usage: node --import tsx scripts/replay-run.mjs <run .jsonl | run ID> [--full | --model <id>]');
+  process.exit(1);
+}
+if (full && modelOverride) {
+  console.error('--full takes every answer from the recording, so there is no model to change. Use one or the other.');
   process.exit(1);
 }
 
@@ -56,12 +66,13 @@ if (!started?.content) {
   process.exit(1);
 }
 
+const recordedModel = started.attrs['gen_ai.request.model'];
 const callModel = full ? createReplayModel(events) : (await import(src('llm.ts'))).callModel;
 
 let run;
 try {
   run = await runAgent({
-    model: started.attrs['gen_ai.request.model'],
+    model: modelOverride ?? recordedModel,
     system: started.content.system,
     user: started.content.user,
     tools: createReplayTools(events),
@@ -76,6 +87,7 @@ try {
 const row = (label, a, b) => console.log(`${label.padEnd(14)} ${String(a).padEnd(22)} ${b}`);
 console.log(`── recorded vs ${full ? 'full replay' : 'tool replay'} ───────────────────────`);
 row('', 'recorded', 'replay');
+row('model', recordedModel, full ? '(from recording)' : run.model);
 row('stop_reason', ended?.attrs.stop_reason ?? '(run never ended)', run.stopReason);
 row('tool_calls', ended?.attrs.tool_calls ?? '?', run.steps.length);
 row('tokens_used', ended?.attrs.tokens_used ?? '?', run.tokens_used);
