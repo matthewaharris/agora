@@ -96,6 +96,8 @@ export async function runAgent(options: {
   callModel: ModelCall;
   /** When given, every step is written to the trajectory as it happens. */
   recorder?: Recorder;
+  /** Short human-readable name for this run in the trajectory, e.g. what is being reviewed. */
+  label?: string;
 }): Promise<AgentRun> {
   const { model, system, tools, limits, callModel, recorder } = options;
   const start = Date.now();
@@ -111,6 +113,7 @@ export async function runAgent(options: {
   await recorder?.record(
     'run.started',
     {
+      ...(options.label ? { label: options.label } : {}),
       'gen_ai.request.model': model,
       limits,
       tool_names: tools.map((tool) => tool.name),
@@ -133,6 +136,7 @@ export async function runAgent(options: {
   let servedModel = model;
 
   const turn = async (allowTools: boolean): Promise<Anthropic.Message> => {
+    const began = Date.now();
     const response = await callModel({
       model,
       max_tokens: limits.maxTokensPerTurn,
@@ -150,6 +154,7 @@ export async function runAgent(options: {
       'model.turn',
       {
         turn: modelTurns,
+        duration_ms: Date.now() - began,
         tools_allowed: allowTools,
         messages_sent: messages.length,
         'gen_ai.response.model': response.model,

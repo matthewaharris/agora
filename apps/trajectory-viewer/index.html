@@ -1,0 +1,325 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Trajectories</title>
+<style>
+  :root {
+    --bg: #f7f6f2; --panel: #ffffff; --ink: #1c1b18; --ink2: #5d5b55; --ink3: #8b8982;
+    --line: #e3e1da; --hover: #f0eee8; --sel: #e8eefb;
+    --model: #3d6fd6; --tool: #1d8f6f; --other: #a8a69e;
+    --ok-bg: #e3f3e8; --ok: #1f6b3a; --warn-bg: #fbefd3; --warn: #7a5200; --bad-bg: #fbe4e2; --bad: #99231c;
+    --mono: ui-monospace, SFMono-Regular, Menlo, monospace;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #161614; --panel: #1f1f1c; --ink: #ecebe6; --ink2: #b0aea6; --ink3: #7f7d76;
+      --line: #33322e; --hover: #282824; --sel: #24304a;
+      --model: #7fa5f5; --tool: #5fc9a8; --other: #6b6963;
+      --ok-bg: #173323; --ok: #8fd6a6; --warn-bg: #3a2e10; --warn: #efc463; --bad-bg: #3d1b18; --bad: #f1a29b;
+    }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--ink); font: 14px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
+  header { display: flex; align-items: center; gap: 12px; padding: 14px 20px; border-bottom: 1px solid var(--line); }
+  header h1 { font-size: 17px; font-weight: 600; margin: 0; }
+  header span { color: var(--ink3); font-size: 13px; }
+  button { font: inherit; color: var(--ink); background: var(--panel); border: 1px solid var(--line); border-radius: 6px; padding: 5px 12px; cursor: pointer; }
+  button:hover { background: var(--hover); }
+  .layout { display: grid; grid-template-columns: 330px minmax(0, 1fr); min-height: calc(100vh - 56px); }
+  @media (max-width: 800px) { .layout { grid-template-columns: 1fr; } }
+  nav { border-right: 1px solid var(--line); padding: 10px; }
+  .run { display: block; width: 100%; text-align: left; border: 1px solid transparent; background: none; border-radius: 8px; padding: 9px 10px; margin-bottom: 2px; }
+  .run:hover { background: var(--hover); }
+  .run.sel { background: var(--sel); border-color: var(--line); }
+  .run .title { font-weight: 500; overflow-wrap: anywhere; }
+  .run .meta { color: var(--ink2); font-size: 12.5px; margin-top: 2px; display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+  main { padding: 20px 24px 60px; min-width: 0; }
+  h2 { font-size: 18px; font-weight: 600; margin: 0 0 2px; overflow-wrap: anywhere; }
+  .sub { color: var(--ink3); font: 12.5px var(--mono); margin-bottom: 16px; overflow-wrap: anywhere; }
+  .tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(130px, 1fr)); gap: 10px; margin-bottom: 16px; }
+  .tile { background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 10px 12px; }
+  .tile .k { color: var(--ink2); font-size: 12.5px; }
+  .tile .v { font-size: 18px; font-weight: 600; margin-top: 2px; overflow-wrap: anywhere; }
+  .badge { display: inline-block; font-size: 12px; font-weight: 500; padding: 1px 8px; border-radius: 99px; background: var(--hover); color: var(--ink2); }
+  .badge.ok { background: var(--ok-bg); color: var(--ok); }
+  .badge.warn { background: var(--warn-bg); color: var(--warn); }
+  .badge.bad { background: var(--bad-bg); color: var(--bad); }
+  .note { border-radius: 8px; padding: 10px 14px; margin-bottom: 16px; background: var(--panel); border: 1px solid var(--line); }
+  .note.warn { background: var(--warn-bg); color: var(--warn); border-color: transparent; }
+  .note b { font-weight: 600; }
+  h3 { font-size: 13px; font-weight: 600; color: var(--ink2); margin: 20px 0 8px; }
+  .strip { display: flex; height: 22px; border-radius: 6px; overflow: hidden; background: var(--line); gap: 1px; }
+  .strip div { min-width: 2px; }
+  .legend { display: flex; gap: 16px; color: var(--ink2); font-size: 12.5px; margin-top: 6px; flex-wrap: wrap; }
+  .dot { display: inline-block; width: 9px; height: 9px; border-radius: 2px; margin-right: 5px; }
+  .events { background: var(--panel); border: 1px solid var(--line); border-radius: 8px; overflow: hidden; }
+  .ev { border-bottom: 1px solid var(--line); }
+  .ev:last-child { border-bottom: 0; }
+  .ev > button { display: grid; grid-template-columns: 26px 62px 118px minmax(0, 1fr) auto; gap: 10px; align-items: baseline; width: 100%; text-align: left; border: 0; border-radius: 0; background: none; padding: 9px 12px; }
+  .ev > button:hover { background: var(--hover); }
+  .seq, .at { color: var(--ink3); font: 12.5px var(--mono); }
+  .type { font: 12.5px var(--mono); }
+  .type.model { color: var(--model); } .type.tool { color: var(--tool); }
+  .what { overflow-wrap: anywhere; }
+  .right { color: var(--ink2); font-size: 12.5px; white-space: nowrap; }
+  .bar { height: 4px; border-radius: 2px; background: var(--model); margin-top: 5px; opacity: .7; }
+  .detail { padding: 4px 12px 14px 48px; display: none; }
+  .ev.open .detail { display: block; }
+  .kv { display: grid; grid-template-columns: max-content minmax(0, 1fr); gap: 2px 14px; font: 12.5px var(--mono); color: var(--ink2); margin-bottom: 10px; }
+  .kv div:nth-child(even) { color: var(--ink); overflow-wrap: anywhere; }
+  .clabel { font-size: 12.5px; color: var(--ink2); margin: 10px 0 4px; }
+  pre { margin: 0; padding: 10px 12px; background: var(--bg); border: 1px solid var(--line); border-radius: 6px; font: 12.5px/1.5 var(--mono); white-space: pre-wrap; overflow-wrap: anywhere; max-height: 340px; overflow: auto; }
+  .empty { color: var(--ink2); padding: 40px 0; }
+  .err { color: var(--bad); background: var(--bad-bg); border-radius: 8px; padding: 12px 14px; }
+</style>
+</head>
+<body>
+<header>
+  <h1>Trajectories</h1>
+  <span id="count"></span>
+  <button id="refresh" style="margin-left:auto">Refresh</button>
+</header>
+<div class="layout">
+  <nav id="runs" aria-label="Recorded runs"></nav>
+  <main id="main"><div class="empty">Loading runs…</div></main>
+</div>
+<script>
+// Everything recorded (prompts, model output, file contents) is other people's text.
+// It is only ever placed with textContent, never as HTML.
+const el = (tag, cls, text) => {
+  const node = document.createElement(tag);
+  if (cls) node.className = cls;
+  if (text !== undefined && text !== null) node.textContent = String(text);
+  return node;
+};
+const num = (n) => (typeof n === 'number' ? n.toLocaleString('en-US') : '–');
+const secs = (ms) => (typeof ms === 'number' ? `${(ms / 1000).toFixed(1)} s` : '–');
+const when = (iso) => new Date(iso).toLocaleString(undefined, { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
+const STOP_TONE = { completed: 'ok', step_cap: 'warn', token_budget: 'warn', output_truncated: 'warn', refused: 'bad', trajectory_unavailable: 'bad' };
+const stopBadge = (run) =>
+  run.ended ? el('span', `badge ${STOP_TONE[run.stop_reason] ?? ''}`, run.stop_reason) : el('span', 'badge bad', 'never ended');
+
+const runsEl = document.getElementById('runs');
+const mainEl = document.getElementById('main');
+let selected = null;
+
+async function api(path) {
+  const res = await fetch(path);
+  const body = await res.json();
+  if (!res.ok) throw new Error(body.error || `Request failed (${res.status})`);
+  return body;
+}
+const showError = (where, err) => where.replaceChildren(el('div', 'err', err.message));
+
+async function loadRuns() {
+  let runs;
+  try {
+    runs = await api('/api/runs');
+  } catch (err) {
+    document.getElementById('count').textContent = '';
+    runsEl.replaceChildren();
+    return showError(mainEl, err);
+  }
+  document.getElementById('count').textContent = `${runs.length} recorded run${runs.length === 1 ? '' : 's'}`;
+  runsEl.replaceChildren(
+    ...runs.map((run) => {
+      const item = el('button', `run${run.run_id === selected ? ' sel' : ''}`);
+      item.append(el('div', 'title', run.label || run.model || run.run_id.slice(0, 8)));
+      const meta = el('div', 'meta');
+      meta.append(el('span', '', when(run.started_at)), stopBadge(run));
+      if (run.ended) meta.append(el('span', '', `${num(run.tokens_used)} tokens`));
+      if (run.verdict_changed) meta.append(el('span', 'badge warn', `${run.verdict_reported} → ${run.verdict}`));
+      item.append(meta);
+      item.onclick = () => openRun(run.run_id);
+      return item;
+    }),
+  );
+  if (runs.length === 0) mainEl.replaceChildren(el('div', 'empty', 'No runs recorded yet. Run a review and refresh.'));
+  else if (!selected) openRun(runs[0].run_id);
+}
+
+function describe(event) {
+  const a = event.attrs || {};
+  const c = event.content;
+  switch (event.type) {
+    case 'run.started':
+      return [a.label || 'Run started', `${a['gen_ai.request.model'] ?? ''} · cap ${a.limits?.maxSteps ?? '?'} tool calls`];
+    case 'model.turn': {
+      const asked = Array.isArray(c?.response) ? c.response.filter((b) => b.type === 'tool_use').length : null;
+      const did = asked === null ? '' : asked > 0 ? `asked for ${asked} tool call${asked === 1 ? '' : 's'}` : 'wrote its answer';
+      return [`Turn ${a.turn}${did ? `: ${did}` : ''}${a.tools_allowed ? '' : ' (tools off)'}`, `${num(a.tokens_this_turn)} tokens`];
+    }
+    case 'tool.call': {
+      const state = a.skipped ? 'skipped' : a.ok ? 'ok' : 'failed';
+      return [`${a['gen_ai.tool.name']} ${JSON.stringify(a.input ?? {})}`, `${state} · ${num(a.duration_ms)} ms`];
+    }
+    case 'limit.hit':
+      return [`Limit reached: ${a.limit}. Tools switched off.`, ''];
+    case 'run.ended':
+      return [`Run ended: ${a.stop_reason}`, `${num(a.tokens_used)} tokens`];
+    case 'policy.applied':
+      return [a.changed ? `Policy changed the verdict: ${a.verdict_reported} → ${a.verdict}` : `Policy kept the verdict: ${a.verdict}`, ''];
+    default:
+      return [event.type, ''];
+  }
+}
+
+function contentBlocks(event) {
+  const c = event.content;
+  const out = [];
+  const add = (label, text) => {
+    out.push(el('div', 'clabel', label), el('pre', '', typeof text === 'string' ? text : JSON.stringify(text, null, 2)));
+  };
+  if (c === undefined || c === null) {
+    const hasNone = event.type === 'limit.hit' || event.type === 'policy.applied';
+    out.push(el('div', 'clabel', hasNone ? 'This event has no content, only measured facts.' : 'Content has expired or was not stored. The measured facts above are kept.'));
+    return out;
+  }
+  if (event.type === 'run.started') {
+    add('System prompt', c.system);
+    add('Task sent to the model', c.user);
+    add('Tools offered', (c.tools || []).map((t) => `${t.name}: ${t.description}`).join('\n\n'));
+  } else if (event.type === 'model.turn' && Array.isArray(c.response)) {
+    for (const block of c.response) {
+      if (block.type === 'text') add('Model wrote', block.text);
+      else if (block.type === 'tool_use') add('Model asked for a tool', `${block.name} ${JSON.stringify(block.input)}`);
+      else add(`Model output (${block.type})`, block);
+    }
+  } else if (event.type === 'tool.call') {
+    add(event.attrs?.ok ? 'Tool returned' : 'Tool error', c.output);
+  } else if (event.type === 'run.ended') {
+    add('Final answer', c.text);
+  } else add('Content', c);
+  if (event.content_expires_at) out.push(el('div', 'clabel', `Content will be cleared on ${new Date(event.content_expires_at).toLocaleDateString()}.`));
+  return out;
+}
+
+async function openRun(runId) {
+  selected = runId;
+  for (const item of runsEl.children) item.classList.remove('sel');
+  let events;
+  try {
+    events = await api(`/api/runs/${runId}`);
+  } catch (err) {
+    return showError(mainEl, err);
+  }
+  loadRuns();
+  if (events.length === 0) return mainEl.replaceChildren(el('div', 'empty', 'No events for this run.'));
+
+  const first = events[0];
+  const started = events.find((e) => e.type === 'run.started');
+  const ended = events.find((e) => e.type === 'run.ended');
+  const policy = events.find((e) => e.type === 'policy.applied');
+  const t0 = Date.parse(first.ts);
+  const out = [];
+
+  out.push(el('h2', '', started?.attrs?.label || 'Agent run'));
+  out.push(el('div', 'sub', `run ${runId} · trace ${first.trace_id} · ${new Date(first.ts).toLocaleString()}`));
+
+  const tiles = el('div', 'tiles');
+  const tile = (k, v) => {
+    const t = el('div', 'tile');
+    const value = el('div', 'v');
+    value.append(v);
+    t.append(el('div', 'k', k), value);
+    tiles.append(t);
+  };
+  const e = ended?.attrs || {};
+  tile('Stop reason', stopBadge({ ended: Boolean(ended), stop_reason: e.stop_reason }));
+  tile('Model turns', num(e.model_turns));
+  tile('Tool calls', num(e.tool_calls));
+  tile('Tokens', num(e.tokens_used));
+  tile('Duration', secs(e.duration_ms));
+  tile('Model', started?.attrs?.['gen_ai.request.model'] ?? '–');
+  out.push(tiles);
+
+  if (!ended) {
+    out.push(Object.assign(el('div', 'note warn'), { textContent: `This run never recorded an end. It stopped after event ${events.at(-1).seq}: the process died or the store failed.` }));
+  }
+  if (policy) {
+    const p = policy.attrs;
+    const note = el('div', `note${p.changed ? ' warn' : ''}`);
+    note.append(el('b', '', 'Reported vs measured. '));
+    note.append(
+      p.changed
+        ? `The model reported “${p.verdict_reported}”. The run stopped on ${e.stop_reason ?? 'a limit'}, so the platform returned “${p.verdict}”.`
+        : `The model reported “${p.verdict_reported}” and the platform kept it.`,
+      ` Files actually read: ${(p.files_read || []).join(', ') || 'none'}.`,
+    );
+    out.push(note);
+  }
+
+  // Where the time went. A turn or tool call has its own measured duration; other
+  // events are instant. Older recordings have no turn duration, so the gap since the
+  // previous event stands in for it.
+  const spans = events.map((ev, i) => {
+    const kind = ev.type === 'model.turn' ? 'model' : ev.type === 'tool.call' ? 'tool' : 'other';
+    let ms = ev.attrs?.duration_ms;
+    if (kind === 'model' && typeof ms !== 'number') ms = i > 0 ? Date.parse(ev.ts) - Date.parse(events[i - 1].ts) : 0;
+    return { kind, ms: kind === 'other' ? 0 : Math.max(0, ms || 0), ev };
+  });
+  const total = spans.reduce((sum, s) => sum + s.ms, 0);
+  if (total > 0) {
+    out.push(el('h3', '', 'Where the time went'));
+    const strip = el('div', 'strip');
+    for (const s of spans.filter((s) => s.ms > 0)) {
+      const seg = el('div');
+      seg.style.flex = `${s.ms} 0 0`;
+      seg.style.background = `var(--${s.kind})`;
+      seg.title = `${describe(s.ev)[0]} — ${secs(s.ms)}`;
+      strip.append(seg);
+    }
+    out.push(strip);
+    const sumOf = (kind) => spans.filter((s) => s.kind === kind).reduce((sum, s) => sum + s.ms, 0);
+    const legend = el('div', 'legend');
+    for (const [kind, name] of [['model', 'Model thinking'], ['tool', 'Tools running']]) {
+      const item = el('span');
+      const dot = el('span', 'dot');
+      dot.style.background = `var(--${kind})`;
+      item.append(dot, `${name}: ${secs(sumOf(kind))}`);
+      legend.append(item);
+    }
+    out.push(legend);
+  }
+
+  out.push(el('h3', '', `Events (${events.length}) — select one to see what was said`));
+  const maxTurn = Math.max(1, ...events.map((ev) => ev.attrs?.tokens_this_turn || 0));
+  const list = el('div', 'events');
+  for (const ev of events) {
+    const row = el('div', 'ev');
+    const head = el('button');
+    head.setAttribute('aria-expanded', 'false');
+    const [what, right] = describe(ev);
+    const whatEl = el('div', 'what', what);
+    if (ev.type === 'model.turn') {
+      const bar = el('div', 'bar');
+      bar.style.width = `${Math.max(2, ((ev.attrs.tokens_this_turn || 0) / maxTurn) * 100)}%`;
+      bar.title = 'Tokens this turn, relative to the largest turn';
+      whatEl.append(bar);
+    }
+    const kind = ev.type === 'model.turn' ? ' model' : ev.type === 'tool.call' ? ' tool' : '';
+    head.append(el('span', 'seq', ev.seq), el('span', 'at', `+${((Date.parse(ev.ts) - t0) / 1000).toFixed(1)}s`), el('span', `type${kind}`, ev.type), whatEl, el('span', 'right', right));
+    const detail = el('div', 'detail');
+    head.onclick = () => {
+      const open = row.classList.toggle('open');
+      head.setAttribute('aria-expanded', String(open));
+      if (open && !detail.hasChildNodes()) {
+        const kv = el('div', 'kv');
+        for (const [k, v] of Object.entries(ev.attrs || {})) kv.append(el('div', '', k), el('div', '', typeof v === 'string' ? v : JSON.stringify(v)));
+        detail.append(el('div', 'clabel', 'Measured facts (kept)'), kv, ...contentBlocks(ev));
+      }
+    };
+    row.append(head, detail);
+    list.append(row);
+  }
+  out.push(list);
+  mainEl.replaceChildren(...out);
+}
+
+document.getElementById('refresh').onclick = loadRuns;
+loadRuns();
+</script>
+</body>
+</html>

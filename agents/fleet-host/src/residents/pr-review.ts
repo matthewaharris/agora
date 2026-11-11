@@ -211,6 +211,7 @@ async function reviewPrWithTools(
     limits: AGENT_LIMITS,
     callModel,
     recorder,
+    label: `review-pr ${repo.owner}/${repo.repo}@${repo.sha.slice(0, 7)}`,
   });
   if (run.stopReason === 'trajectory_unavailable') {
     throw new TrajectoryUnavailableError('the run was stopped part-way because it could not be recorded');

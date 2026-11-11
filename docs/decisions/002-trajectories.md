@@ -98,6 +98,9 @@ With no store configured, runs are not recorded, so the deployed fleet host beha
   path. Full replay (`--full`) also takes the model's answers from the recording: it costs
   nothing, repeats exactly, and stops with "replay diverged" if the harness now sends a different
   request than it did originally.
+- `apps/trajectory-viewer`: the timeline view. It is a small local server and page, separate from
+  the public dashboard, because reading trajectories needs the database's service-role key and
+  that key must not reach a public web page. It listens on this machine only.
 - Attribute names follow the OpenTelemetry GenAI conventions where one exists (`gen_ai.*`).
 
 ## Still to do in this phase
@@ -105,4 +108,3 @@ With no store configured, runs are not recorded, so the deployed fleet host beha
 - Create the trajectory project, apply `agents/fleet-host/db/001_trajectory_events.sql`, and do a
   live run against it. The store and SQL are written and tested locally, not yet against Supabase.
 - The trace-context RFC and SDK change (decision 2).
-- The trajectory timeline view in the dashboard.
