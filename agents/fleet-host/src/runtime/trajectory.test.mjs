@@ -7,9 +7,11 @@ import assert from 'node:assert/strict';
 import { runAgent } from './harness.ts';
 import {
   createRecorder,
+  createReplayModel,
   createReplayTools,
   memoryStore,
   postgresStore,
+  readDatabaseRun,
   TrajectoryUnavailableError,
 } from './trajectory.ts';
 
@@ -258,6 +260,80 @@ await test('postgres store: a failed write stops a required run', async () => {
   await assert.rejects(
     runAgent({ ...base, callModel: fakeModel([say('never')]).callModel, recorder }),
     TrajectoryUnavailableError,
+  );
+});
+
+const recordCappedRun = async () => {
+  const store = memoryStore();
+  const original = await runAgent({
+    ...base,
+    limits: { ...limits, maxSteps: 2 },
+    callModel: fakeModel([
+      ask([
+        ['a', 'echo', { v: 1 }],
+        ['b', 'boom', {}],
+      ]),
+      say('partial'),
+    ]).callModel,
+    recorder: createRecorder({ store, mode: 'required' }),
+  });
+  return { store, original };
+};
+const fullReplay = (events, overrides = {}) =>
+  runAgent({
+    ...base,
+    limits: { ...limits, maxSteps: 2 },
+    tools: createReplayTools(events),
+    callModel: createReplayModel(events),
+    ...overrides,
+  });
+
+await test('full replay: the same run comes back exactly, with no model or tool called', async () => {
+  const { store, original } = await recordCappedRun();
+  toolRuns = 0;
+  const replay = await fullReplay(store.events);
+  assert.equal(toolRuns, 0);
+  const comparable = ({ duration_ms, steps, ...rest }) => ({
+    ...rest,
+    steps: steps.map(({ duration_ms: _, ...step }) => step),
+  });
+  assert.deepEqual(comparable(replay), comparable(original));
+});
+
+await test('full replay: it is repeatable', async () => {
+  const { store } = await recordCappedRun();
+  const [a, b] = [await fullReplay(store.events), await fullReplay(store.events)];
+  assert.equal(a.text, b.text);
+  assert.equal(a.tokens_used, b.tokens_used);
+});
+
+await test('full replay: a harness that now behaves differently is caught, not papered over', async () => {
+  const { store } = await recordCappedRun();
+  // Same recording, but the cap is lifted: the harness would now keep tools on for turn 2.
+  await assert.rejects(fullReplay(store.events, { limits }), /Replay diverged at turn 2/);
+});
+
+await test('full replay: asking for more turns than were recorded is caught', async () => {
+  const { store } = await recordCappedRun();
+  const model = createReplayModel(store.events.filter((e) => e.seq < 6)); // drop the final turn
+  await assert.rejects(fullReplay(store.events, { callModel: model }), /only 1 were recorded/);
+});
+
+await test('database read: rows come back as events, in order, with NULL content dropped', async () => {
+  const rows = [
+    { ...event({ seq: 1 }), content: { output: 'x' }, content_expires_at: 'later' },
+    { ...event({ seq: 2 }), content: null },
+  ];
+  const requests = [];
+  const fetchImpl = async (url) => (requests.push(url), Response.json(rows));
+  const runId = '00000000-0000-0000-0000-000000000001';
+  const events = await readDatabaseRun({ url: 'https://db.example', key: 'k', runId, fetchImpl });
+  assert.match(requests[0], /run_id=eq\.00000000-0000-0000-0000-000000000001&order=seq$/);
+  assert.deepEqual(events[0].content, { output: 'x' });
+  assert.equal('content' in events[1], false);
+  await assert.rejects(
+    readDatabaseRun({ url: 'https://db.example', key: 'k', runId: 'x&select=*', fetchImpl }),
+    /UUID/,
   );
 });
 

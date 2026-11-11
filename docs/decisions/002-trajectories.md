@@ -93,7 +93,11 @@ With no store configured, runs are not recorded, so the deployed fleet host beha
   the table, the append-only trigger and the daily content-expiry job.
 - `runtime/harness.ts`: emits `run.started`, `model.turn`, `tool.call`, `limit.hit`, `run.ended`.
 - `residents/pr-review.ts`: emits `policy.applied`; returns `run_id` and `trace_id`.
-- `scripts/replay-run.mjs`: re-runs the live model against a recorded run's tool results.
+- `scripts/replay-run.mjs`: two kinds of replay, from a file or from the database by run ID.
+  Tool replay runs the live model against recorded tool results, so the model may take a new
+  path. Full replay (`--full`) also takes the model's answers from the recording: it costs
+  nothing, repeats exactly, and stops with "replay diverged" if the harness now sends a different
+  request than it did originally.
 - Attribute names follow the OpenTelemetry GenAI conventions where one exists (`gen_ai.*`).
 
 ## Still to do in this phase

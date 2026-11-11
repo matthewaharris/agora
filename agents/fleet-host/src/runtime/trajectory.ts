@@ -15,7 +15,8 @@
 import { randomBytes, randomUUID } from 'node:crypto';
 import { appendFile, mkdir, readFile } from 'node:fs/promises';
 import { join } from 'node:path';
-import type { AgentTool } from './harness.js';
+import type Anthropic from '@anthropic-ai/sdk';
+import type { AgentTool, ModelCall } from './harness.js';
 
 export type TrajectoryEventType =
   'run.started' | 'model.turn' | 'tool.call' | 'limit.hit' | 'run.ended' | 'policy.applied';
@@ -214,6 +215,25 @@ export function postgresStore(options: {
   };
 }
 
+/** Read one run's events back from the trajectory database, in order. */
+export async function readDatabaseRun(options: {
+  url: string;
+  key: string;
+  runId: string;
+  fetchImpl?: typeof fetch;
+}): Promise<TrajectoryEvent[]> {
+  const { key, fetchImpl = fetch } = options;
+  if (!/^[0-9a-f-]{36}$/i.test(options.runId)) throw new Error('run ID must be a UUID');
+  const res = await fetchImpl(
+    `${options.url.replace(/\/+$/, '')}/rest/v1/trajectory_events?run_id=eq.${options.runId}&order=seq`,
+    { headers: { apikey: key, Authorization: `Bearer ${key}` }, signal: AbortSignal.timeout(10_000) },
+  );
+  if (!res.ok) throw new Error(`trajectory database answered ${res.status}`);
+  const rows = (await res.json()) as Array<TrajectoryEvent & { content: unknown }>;
+  // The database stores "no content" as NULL; in an event that means the field is absent.
+  return rows.map(({ content, ...row }) => (content === null ? row : { ...row, content }));
+}
+
 /**
  * The store this process is configured to use, or null when none is.
  * With no store configured, runs are not recorded at all.
@@ -275,4 +295,53 @@ export function createReplayTools(events: TrajectoryEvent[]): AgentTool[] {
       return hit.output;
     },
   }));
+}
+
+/**
+ * A model that answers from a recorded run instead of calling the provider.
+ *
+ * Together with createReplayTools this makes a full replay: nothing leaves the
+ * process, it costs nothing, and it gives the same result every time. Use it
+ * to check what a changed harness or policy does with a run that already
+ * happened.
+ *
+ * Each turn is checked against the recording. If the harness now sends a
+ * different request than it did originally, the replay stops and says where,
+ * because the recorded answer would no longer be an answer to that request.
+ */
+export function createReplayModel(events: TrajectoryEvent[]): ModelCall {
+  const turns = events.filter((e) => e.type === 'model.turn');
+  let next = 0;
+  return async (params) => {
+    const event = turns[next++];
+    if (!event) {
+      throw new Error(
+        `Replay diverged: the harness asked for turn ${next}, but only ${turns.length} were recorded`,
+      );
+    }
+    const response = (event.content as { response?: Anthropic.ContentBlock[] } | undefined)?.response;
+    if (!response) throw new Error(`Turn ${next} has no recorded response (content missing or expired)`);
+
+    const toolsAllowed = params.tool_choice?.type !== 'none';
+    if (params.messages.length !== event.attrs.messages_sent || toolsAllowed !== event.attrs.tools_allowed) {
+      throw new Error(
+        `Replay diverged at turn ${next}: recorded ${event.attrs.messages_sent} message(s) with tools ` +
+          `${event.attrs.tools_allowed ? 'on' : 'off'}, now ${params.messages.length} with tools ${toolsAllowed ? 'on' : 'off'}`,
+      );
+    }
+
+    const output = Number(event.attrs['gen_ai.usage.output_tokens'] ?? 0);
+    const finish = (event.attrs['gen_ai.response.finish_reasons'] as Anthropic.Message['stop_reason'][])[0];
+    // Only the fields the harness reads are rebuilt. Token counts match the recording's totals.
+    return {
+      id: `replay-${event.run_id}-${event.seq}`,
+      type: 'message',
+      role: 'assistant',
+      model: String(event.attrs['gen_ai.response.model']),
+      content: response,
+      stop_reason: finish,
+      stop_sequence: null,
+      usage: { input_tokens: Number(event.attrs.tokens_this_turn) - output, output_tokens: output },
+    } as Anthropic.Message;
+  };
 }
