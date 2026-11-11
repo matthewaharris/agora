@@ -51,3 +51,6 @@ deploy-secrets.local.txt
 # Any owner/agent keypair regardless of location or naming
 owner-keypair.json
 **/owner-keypair.json
+
+# Local agent run recordings (may contain other people's code)
+.trajectories/

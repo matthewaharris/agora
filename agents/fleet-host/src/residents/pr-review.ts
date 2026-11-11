@@ -18,6 +18,12 @@ import { callModel, complete, extractJSON } from '../llm.js';
 import type { Resident } from '../roster.js';
 import { runAgent, type AgentLimits } from '../runtime/harness.js';
 import { createGithubReadTools } from '../runtime/github-tools.js';
+import {
+  createRecorder,
+  modeFromEnv,
+  storeFromEnv,
+  TrajectoryUnavailableError,
+} from '../runtime/trajectory.js';
 import { applyReviewPolicy } from './pr-review-policy.js';
 
 const MODEL = process.env.ANTHROPIC_MODEL || 'claude-haiku-4-5';
@@ -191,6 +197,12 @@ async function reviewPrWithTools(
   focus: string | undefined,
 ) {
   const { userPrompt, truncated } = buildUserPrompt(diff, title, context, focus);
+  // Recording is on when a store is configured. By default a run that cannot
+  // be recorded is stopped (docs/decisions/002-trajectories.md, decision 3).
+  const store = storeFromEnv();
+  const recorder = store
+    ? createRecorder({ store, mode: modeFromEnv(process.env.PR_REVIEW_TRAJECTORY_MODE) })
+    : undefined;
   const run = await runAgent({
     model: MODEL,
     system: AGENT_SYSTEM_PROMPT,
@@ -198,15 +210,32 @@ async function reviewPrWithTools(
     tools: createGithubReadTools(repo, process.env.GITHUB_TOKEN),
     limits: AGENT_LIMITS,
     callModel,
+    recorder,
   });
+  if (run.stopReason === 'trajectory_unavailable') {
+    throw new TrajectoryUnavailableError('the run was stopped part-way because it could not be recorded');
+  }
   const filesRead = [
     ...new Set(
       run.steps.filter((s) => s.tool === 'read_file' && s.ok).map((s) => String(s.input.path)),
     ),
   ];
+  // Measured facts overrule reported ones: see pr-review-policy.ts.
+  const reported = shapeReview(run.text);
+  const review = applyReviewPolicy(reported, { stopReason: run.stopReason, filesRead });
+  await recorder?.record('policy.applied', {
+    policy: 'pr-review',
+    verdict_reported: reported.verdict,
+    verdict: review.verdict,
+    changed: review.verdict !== reported.verdict,
+    files_read: filesRead,
+  });
+  const saved = await recorder?.close();
   return {
-    // Measured facts overrule reported ones: see pr-review-policy.ts.
-    ...applyReviewPolicy(shapeReview(run.text), { stopReason: run.stopReason, filesRead }),
+    ...review,
+    ...(recorder
+      ? { run_id: recorder.run_id, trace_id: recorder.trace_id, trajectory_events_unsaved: saved?.unsaved ?? 0 }
+      : {}),
     diff_truncated: truncated,
     review_complete: run.stopReason === 'completed',
     stop_reason: run.stopReason,

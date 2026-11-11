@@ -12,6 +12,7 @@
  * docs/decisions/001-agent-harness.md.
  */
 import type Anthropic from '@anthropic-ai/sdk';
+import { TrajectoryUnavailableError, type Recorder } from './trajectory.js';
 
 export interface AgentTool {
   name: string;
@@ -35,7 +36,8 @@ export type StopReason =
   | 'step_cap' // tool-call limit reached; final answer forced
   | 'token_budget' // token budget reached; final answer forced
   | 'output_truncated' // a turn hit maxTokensPerTurn
-  | 'refused'; // the model declined
+  | 'refused' // the model declined
+  | 'trajectory_unavailable'; // the run could not be recorded, so it was stopped
 
 export interface StepRecord {
   step: number;
@@ -58,9 +60,7 @@ export interface AgentRun {
   duration_ms: number;
 }
 
-export type ModelCall = (
-  params: Anthropic.MessageCreateParamsNonStreaming,
-) => Promise<Anthropic.Message>;
+export type ModelCall = (params: Anthropic.MessageCreateParamsNonStreaming) => Promise<Anthropic.Message>;
 
 /** Tool output beyond this is cut, with a note the model can see. */
 const MAX_TOOL_OUTPUT_CHARS = 30_000;
@@ -94,8 +94,10 @@ export async function runAgent(options: {
   tools: AgentTool[];
   limits: AgentLimits;
   callModel: ModelCall;
+  /** When given, every step is written to the trajectory as it happens. */
+  recorder?: Recorder;
 }): Promise<AgentRun> {
-  const { model, system, tools, limits, callModel } = options;
+  const { model, system, tools, limits, callModel, recorder } = options;
   const start = Date.now();
   const byName = new Map(tools.map((tool) => [tool.name, tool]));
   const toolParams: Anthropic.Tool[] = tools.map((tool) => ({
@@ -103,6 +105,26 @@ export async function runAgent(options: {
     description: tool.description,
     input_schema: tool.inputSchema,
   }));
+
+  // Written before any model call. If a required store is down this throws,
+  // and the run is refused before it has cost anything.
+  await recorder?.record(
+    'run.started',
+    {
+      'gen_ai.request.model': model,
+      limits,
+      tool_names: tools.map((tool) => tool.name),
+    },
+    {
+      system,
+      user: options.user,
+      tools: tools.map(({ name, description, inputSchema }) => ({
+        name,
+        description,
+        inputSchema,
+      })),
+    },
+  );
 
   const messages: Anthropic.MessageParam[] = [{ role: 'user', content: options.user }];
   const steps: StepRecord[] = [];
@@ -124,6 +146,21 @@ export async function runAgent(options: {
     modelTurns++;
     tokensUsed += turnTokens(response.usage);
     servedModel = response.model;
+    await recorder?.record(
+      'model.turn',
+      {
+        turn: modelTurns,
+        tools_allowed: allowTools,
+        messages_sent: messages.length,
+        'gen_ai.response.model': response.model,
+        'gen_ai.response.finish_reasons': [response.stop_reason],
+        'gen_ai.usage.input_tokens': response.usage.input_tokens,
+        'gen_ai.usage.output_tokens': response.usage.output_tokens,
+        tokens_this_turn: turnTokens(response.usage),
+        tokens_so_far: tokensUsed,
+      },
+      { response: response.content },
+    );
     return response;
   };
 
@@ -162,7 +199,11 @@ export async function runAgent(options: {
     const began = Date.now();
     const tool = byName.get(call.name);
     if (!tool) {
-      return { ok: false, output: `Unknown tool: ${call.name}`, duration_ms: 0 };
+      return {
+        ok: false,
+        output: `Unknown tool: ${call.name}`,
+        duration_ms: 0,
+      };
     }
     try {
       let output = await tool.run(call.input as Record<string, unknown>);
@@ -178,52 +219,101 @@ export async function runAgent(options: {
     }
   };
 
-  for (;;) {
-    const response = await turn(true);
-    if (response.stop_reason === 'refusal') return finish(textOf(response), 'refused');
-    if (response.stop_reason === 'max_tokens') return finish(textOf(response), 'output_truncated');
+  const loop = async (): Promise<AgentRun> => {
+    for (;;) {
+      const response = await turn(true);
+      if (response.stop_reason === 'refusal') return finish(textOf(response), 'refused');
+      if (response.stop_reason === 'max_tokens') return finish(textOf(response), 'output_truncated');
 
-    const calls = response.content.filter(
-      (block): block is Anthropic.ToolUseBlock => block.type === 'tool_use',
-    );
-    if (calls.length === 0) return finish(textOf(response), 'completed');
+      const calls = response.content.filter(
+        (block): block is Anthropic.ToolUseBlock => block.type === 'tool_use',
+      );
+      if (calls.length === 0) return finish(textOf(response), 'completed');
 
-    messages.push({ role: 'assistant', content: response.content });
+      messages.push({ role: 'assistant', content: response.content });
 
-    // Decide which calls may run. Every tool_use needs a tool_result, so
-    // calls beyond a cap still get an answer: an error saying they were skipped.
-    const overBudget = tokensUsed >= limits.maxTotalTokens;
-    const room = overBudget ? 0 : Math.max(0, limits.maxSteps - steps.length);
-    const capped: 'step_cap' | 'token_budget' | null = overBudget
-      ? 'token_budget'
-      : calls.length >= room
-        ? 'step_cap'
-        : null;
+      // Decide which calls may run. Every tool_use needs a tool_result, so
+      // calls beyond a cap still get an answer: an error saying they were skipped.
+      const overBudget = tokensUsed >= limits.maxTotalTokens;
+      const room = overBudget ? 0 : Math.max(0, limits.maxSteps - steps.length);
+      const capped: 'step_cap' | 'token_budget' | null = overBudget
+        ? 'token_budget'
+        : calls.length >= room
+          ? 'step_cap'
+          : null;
 
-    const outcomes = await Promise.all(
-      calls.map((call, i) =>
-        i < room
-          ? execute(call)
-          : Promise.resolve({
-              ok: false,
-              output: `Not run: ${FINALIZE_NOTE[capped ?? 'step_cap']}`,
-              duration_ms: 0,
-            }),
-      ),
-    );
-    // All results go back in ONE user message, in call order.
-    const results: Anthropic.ContentBlockParam[] = calls.map((call, i) => record(call, outcomes[i]));
+      const outcomes = await Promise.all(
+        calls.map((call, i) =>
+          i < room
+            ? execute(call)
+            : Promise.resolve({
+                ok: false,
+                output: `Not run: ${FINALIZE_NOTE[capped ?? 'step_cap']}`,
+                duration_ms: 0,
+              }),
+        ),
+      );
+      // All results go back in ONE user message, in call order.
+      const results: Anthropic.ContentBlockParam[] = calls.map((call, i) => record(call, outcomes[i]));
+      for (const [i, call] of calls.entries()) {
+        await recorder?.record(
+          'tool.call',
+          {
+            step: steps.length - calls.length + i + 1,
+            'gen_ai.tool.name': call.name,
+            'gen_ai.tool.call.id': call.id,
+            input: call.input,
+            ok: outcomes[i].ok,
+            skipped: i >= room,
+            duration_ms: outcomes[i].duration_ms,
+            output_chars: outcomes[i].output.length,
+          },
+          { output: outcomes[i].output },
+        );
+      }
 
-    if (capped) {
-      results.push({
-        type: 'text',
-        text: `${FINALIZE_NOTE[capped]} No more tools are available. Give your final answer now from what you have, and say that the work was cut short.`,
-      });
+      if (capped) {
+        await recorder?.record('limit.hit', {
+          limit: capped,
+          steps: steps.length,
+          tokens_so_far: tokensUsed,
+        });
+        results.push({
+          type: 'text',
+          text: `${FINALIZE_NOTE[capped]} No more tools are available. Give your final answer now from what you have, and say that the work was cut short.`,
+        });
+        messages.push({ role: 'user', content: results });
+        const final = await turn(false);
+        return finish(textOf(final), final.stop_reason === 'refusal' ? 'refused' : capped);
+      }
+
       messages.push({ role: 'user', content: results });
-      const final = await turn(false);
-      return finish(textOf(final), final.stop_reason === 'refusal' ? 'refused' : capped);
     }
+  };
 
-    messages.push({ role: 'user', content: results });
+  let run: AgentRun;
+  try {
+    run = await loop();
+  } catch (err) {
+    if (!(err instanceof TrajectoryUnavailableError)) throw err;
+    // The store failed part-way. Work that cannot be recorded is not continued.
+    return finish('', 'trajectory_unavailable');
   }
+  try {
+    await recorder?.record(
+      'run.ended',
+      {
+        stop_reason: run.stopReason,
+        model_turns: run.modelTurns,
+        tool_calls: run.steps.length,
+        tokens_used: run.tokens_used,
+        duration_ms: run.duration_ms,
+      },
+      { text: run.text },
+    );
+  } catch (err) {
+    if (!(err instanceof TrajectoryUnavailableError)) throw err;
+    return { ...run, stopReason: 'trajectory_unavailable' };
+  }
+  return run;
 }
