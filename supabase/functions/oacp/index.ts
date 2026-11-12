@@ -2049,6 +2049,23 @@ async function handleMessageSend(req: Request): Promise<Response> {
   const correlationId = (body.correlation_id as string) || undefined;
   const sequence = (body.sequence as number) ?? undefined;
 
+  // RFC 008: trace context. Malformed values are rejected before the signature
+  // check so the sender gets a precise error rather than "invalid signature".
+  const traceId = body.trace_id ?? undefined;
+  const traceParentId = body.trace_parent_id ?? undefined;
+  if (traceId !== undefined &&
+    (typeof traceId !== 'string' || !/^[0-9a-f]{32}$/.test(traceId) || /^0+$/.test(traceId))) {
+    return errorResponse('trace_id must be 32 lowercase hex characters, not all zeros', 400);
+  }
+  if (traceParentId !== undefined) {
+    if (traceId === undefined) {
+      return errorResponse('trace_parent_id requires trace_id', 400);
+    }
+    if (typeof traceParentId !== 'string' || !/^[A-Za-z0-9_-]{1,64}$/.test(traceParentId)) {
+      return errorResponse('trace_parent_id must be 1 to 64 characters of A-Z a-z 0-9 _ -', 400);
+    }
+  }
+
   const canonicalMsg = canonicalizeMessage({
     sender_agent_id: senderAgentId,
     recipient_agent_id: body.recipient_agent_id as string,
@@ -2056,6 +2073,8 @@ async function handleMessageSend(req: Request): Promise<Response> {
     payload,
     correlation_id: correlationId,
     sequence: sequence,
+    trace_id: traceId as string | undefined,
+    trace_parent_id: traceParentId as string | undefined,
   });
 
   const signatureValid = verifyMessageSignature(
@@ -2090,6 +2109,8 @@ async function handleMessageSend(req: Request): Promise<Response> {
     signature: body.signature as string,
     correlation_id: (body.correlation_id as string) || null,
     sequence: (body.sequence as number) || null,
+    ...(traceId !== undefined ? { trace_id: traceId } : {}),
+    ...(traceParentId !== undefined ? { trace_parent_id: traceParentId } : {}),
     created_at: now,
     delivery_status: deliveryStatus,
     ...(ttlSeconds !== undefined

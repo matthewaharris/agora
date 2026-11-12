@@ -38,6 +38,8 @@ export function canonicalizeMessage(fields: {
   correlation_id?: string;
   sequence?: number;
   timestamp?: string;
+  trace_id?: string;
+  trace_parent_id?: string;
 }): string {
   // Sort keys for deterministic output
   const canonical: Record<string, unknown> = {};
@@ -48,6 +50,9 @@ export function canonicalizeMessage(fields: {
   canonical.sender_agent_id = fields.sender_agent_id;
   if (fields.sequence !== undefined) canonical.sequence = fields.sequence;
   if (fields.timestamp !== undefined) canonical.timestamp = fields.timestamp;
+  // RFC 008: signed when present, omitted when absent, so untraced messages verify as before.
+  if (fields.trace_id !== undefined) canonical.trace_id = fields.trace_id;
+  if (fields.trace_parent_id !== undefined) canonical.trace_parent_id = fields.trace_parent_id;
 
   return JSON.stringify(canonical);
 }
