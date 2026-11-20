@@ -14,6 +14,7 @@
  *   ANTHROPIC_API_KEY   required (LLM-backed residents)
  *   SUPABASE_URL / SUPABASE_ANON_KEY   optional — defaults to the public registry
  *   FLEET_LLM_CONCURRENCY   max concurrent Anthropic calls (default 3)
+ *   FLEET_ACCEPT_SENDERS    agent IDs every resident accepts at boot (see src/accept-senders.ts)
  */
 import 'dotenv/config';
 import * as fs from 'node:fs';
@@ -26,6 +27,7 @@ import {
   isValidMasterSeed,
 } from './src/identity.js';
 import { buildRoster, type Resident } from './src/roster.js';
+import { acceptListedSenders, parseAcceptSenders } from './src/accept-senders.js';
 
 const REGISTER_STAGGER_MS = 250;
 
@@ -95,6 +97,10 @@ export async function bootFleet(options: FleetOptions = {}): Promise<Fleet> {
   const prefix = options.namePrefix ?? '';
   const stateDir = options.stateDir ?? '.';
   const agents = new Map<string, OACPAgent>();
+  const acceptSenders = parseAcceptSenders(process.env.FLEET_ACCEPT_SENDERS);
+  if (acceptSenders.invalid.length > 0) {
+    console.warn(`[fleet] FLEET_ACCEPT_SENDERS: ignoring ${acceptSenders.invalid.length} entr(ies) that are not agent IDs`);
+  }
 
   for (const resident of residents) {
     const name = `${prefix}${resident.name}`;
@@ -130,6 +136,9 @@ export async function bootFleet(options: FleetOptions = {}): Promise<Fleet> {
     const agentId = await agent.register();
     console.log(`🏠 ${name} registered as ${agentId} (pk ${agent.getPublicKey().slice(0, 16)}…)`);
     agent.startHeartbeat();
+    await acceptListedSenders({
+      agent, residentName: name, residentAgentId: agentId, senderIds: acceptSenders.ids,
+    });
     await resident.init?.(agent, agents);
     agents.set(name, agent);
 

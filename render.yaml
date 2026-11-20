@@ -24,5 +24,9 @@ services:
       #   node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"
       - key: FLEET_MASTER_SEED
         sync: false
+      # Optional: agent IDs every resident accepts as senders at boot,
+      # comma-separated (agents/fleet-host/src/accept-senders.ts).
+      - key: FLEET_ACCEPT_SENDERS
+        sync: false
       - key: NODE_ENV
         value: production
