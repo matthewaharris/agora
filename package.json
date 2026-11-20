@@ -21,7 +21,7 @@
     "agents/*"
   ],
   "devDependencies": {
-    "oacp-sdk": "^0.19.1"
+    "oacp-sdk": "^0.20.0"
   },
   "keywords": ["oacp", "agent", "protocol", "ai", "interoperability"],
   "license": "MIT"
