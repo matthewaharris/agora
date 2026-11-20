@@ -172,6 +172,17 @@ const DEFAULT_CONTENT_DAYS = 30;
  * `key` is that project's service-role key. It grants full access to the
  * trajectory database only; it is not a registry credential.
  */
+/**
+ * Headers that present a Supabase API key.
+ *
+ * Legacy keys are JWTs and go in both headers. The newer secret keys
+ * (`sb_secret_...`) are not JWTs: Supabase wants them on `apikey` only, and a
+ * non-JWT bearer value can be rejected as "Invalid JWT".
+ */
+export function supabaseKeyHeaders(key: string): Record<string, string> {
+  return key.startsWith('eyJ') ? { apikey: key, Authorization: `Bearer ${key}` } : { apikey: key };
+}
+
 export function postgresStore(options: {
   url: string;
   key: string;
@@ -189,8 +200,7 @@ export function postgresStore(options: {
       const res = await fetchImpl(endpoint, {
         method: 'POST',
         headers: {
-          apikey: key,
-          Authorization: `Bearer ${key}`,
+          ...supabaseKeyHeaders(key),
           'Content-Type': 'application/json',
           Prefer: 'resolution=ignore-duplicates,return=minimal',
         },
@@ -226,7 +236,7 @@ export async function readDatabaseRun(options: {
   if (!/^[0-9a-f-]{36}$/i.test(options.runId)) throw new Error('run ID must be a UUID');
   const res = await fetchImpl(
     `${options.url.replace(/\/+$/, '')}/rest/v1/trajectory_events?run_id=eq.${options.runId}&order=seq`,
-    { headers: { apikey: key, Authorization: `Bearer ${key}` }, signal: AbortSignal.timeout(10_000) },
+    { headers: supabaseKeyHeaders(key), signal: AbortSignal.timeout(10_000) },
   );
   if (!res.ok) throw new Error(`trajectory database answered ${res.status}`);
   const rows = (await res.json()) as Array<TrajectoryEvent & { content: unknown }>;

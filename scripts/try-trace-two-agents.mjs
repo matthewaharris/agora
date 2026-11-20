@@ -105,7 +105,7 @@ const key = process.env.TRAJECTORY_DB_KEY;
 if (db && key) {
   const res = await fetch(
     `${db}/rest/v1/trajectory_events?select=run_id,parent_run_id,type,attrs&trace_id=eq.${traceId}&type=in.(run.started,run.ended)&order=ts`,
-    { headers: { apikey: key, Authorization: `Bearer ${key}` } },
+    { headers: key.startsWith('eyJ') ? { apikey: key, Authorization: `Bearer ${key}` } : { apikey: key } },
   );
   const rows = res.ok ? await res.json() : [];
   const runs = new Map();

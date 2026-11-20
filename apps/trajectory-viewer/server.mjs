@@ -22,13 +22,15 @@ dotenv.config({ path: join(HERE, '../../.env') });
 const PORT = Number(process.env.PORT || process.env.TRAJECTORY_VIEWER_PORT || 4317);
 const DB_URL = (process.env.TRAJECTORY_DB_URL || '').replace(/\/+$/, '');
 const DB_KEY = process.env.TRAJECTORY_DB_KEY || '';
+// Legacy JWT keys go in both headers; the newer sb_secret_ keys go on apikey only.
+const keyHeaders = (k) => (k.startsWith('eyJ') ? { apikey: k, Authorization: `Bearer ${k}` } : { apikey: k });
 
 async function query(params) {
   if (!DB_URL || !DB_KEY) {
     throw Object.assign(new Error('TRAJECTORY_DB_URL and TRAJECTORY_DB_KEY are not set in .env'), { status: 503 });
   }
   const res = await fetch(`${DB_URL}/rest/v1/trajectory_events?${params}`, {
-    headers: { apikey: DB_KEY, Authorization: `Bearer ${DB_KEY}` },
+    headers: keyHeaders(DB_KEY),
     signal: AbortSignal.timeout(10_000),
   });
   if (!res.ok) throw Object.assign(new Error(`Trajectory database answered ${res.status}`), { status: 502 });

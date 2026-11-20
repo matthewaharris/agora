@@ -226,7 +226,12 @@ await test('postgres store: inserts one row, and content gets an expiry', async 
   const { url, init } = requests[0];
   assert.equal(url, 'https://db.example/rest/v1/trajectory_events?on_conflict=run_id,seq');
   assert.equal(init.method, 'POST');
-  assert.equal(init.headers.Authorization, 'Bearer k');
+  // A new-style secret key is not a JWT: apikey only, no bearer header.
+  assert.equal(init.headers.apikey, 'k');
+  assert.equal(init.headers.Authorization, undefined);
+  const legacy = fakeFetch();
+  await postgresStore({ url: 'https://db.example/', key: 'eyJlegacy', fetchImpl: legacy.fetchImpl }).append(event());
+  assert.equal(legacy.requests[0].init.headers.Authorization, 'Bearer eyJlegacy');
   assert.match(init.headers.Prefer, /ignore-duplicates/);
   const row = JSON.parse(init.body);
   assert.deepEqual(row.content, { output: 'x' });
