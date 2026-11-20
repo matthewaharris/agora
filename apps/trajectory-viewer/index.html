@@ -123,10 +123,21 @@ async function loadRuns() {
     return showError(mainEl, err);
   }
   document.getElementById('count').textContent = `${runs.length} recorded run${runs.length === 1 ? '' : 's'}`;
+  // A trace seen on more than one run is one request that crossed agents.
+  const perTrace = new Map();
+  for (const run of runs) perTrace.set(run.trace_id, (perTrace.get(run.trace_id) ?? 0) + 1);
+  const known = new Set(runs.map((run) => run.run_id));
   runsEl.replaceChildren(
     ...runs.map((run) => {
       const item = el('button', `run${run.run_id === selected ? ' sel' : ''}`);
-      item.append(el('div', 'title', run.label || run.model || run.run_id.slice(0, 8)));
+      const called = run.parent_run_id && known.has(run.parent_run_id);
+      if (called) item.style.paddingLeft = '26px';
+      item.append(el('div', 'title', `${called ? '↳ ' : ''}${run.label || run.model || run.run_id.slice(0, 8)}`));
+      if (perTrace.get(run.trace_id) > 1) {
+        item.append(
+          el('div', 'meta', `trace ${run.trace_id.slice(0, 8)} · ${perTrace.get(run.trace_id)} runs${called ? ` · called by run ${run.parent_run_id.slice(0, 8)}` : ''}`),
+        );
+      }
       const meta = el('div', 'meta');
       meta.append(el('span', '', when(run.started_at)), stopBadge(run));
       if (run.ended) meta.append(el('span', '', `${num(run.tokens_used)} tokens`));
@@ -217,6 +228,7 @@ async function openRun(runId) {
 
   out.push(el('h2', '', started?.attrs?.label || 'Agent run'));
   out.push(el('div', 'sub', `run ${runId} · trace ${first.trace_id} · ${new Date(first.ts).toLocaleString()}`));
+  if (first.parent_run_id) out.push(el('div', 'sub', `called by ${first.parent_run_id}`));
 
   const tiles = el('div', 'tiles');
   const tile = (k, v) => {

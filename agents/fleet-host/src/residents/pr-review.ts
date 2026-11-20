@@ -14,9 +14,11 @@
  * feature — human oversight). This resident REFUSES any payload containing
  * something shaped like a credential, and never asks requesters for tokens.
  */
+import { continueTrace, type OACPAgent } from 'oacp-sdk';
 import { callModel, complete, extractJSON } from '../llm.js';
 import type { Resident } from '../roster.js';
-import { runAgent, type AgentLimits } from '../runtime/harness.js';
+import { askAgent } from '../runtime/delegate.js';
+import { runAgent, type AgentLimits, type AgentTool } from '../runtime/harness.js';
 import { createGithubReadTools } from '../runtime/github-tools.js';
 import {
   createRecorder,
@@ -188,6 +190,63 @@ TOOLS:
 - Add a "basis" field to every issue: "verified" if you confirmed it by reading code outside the diff, "diff_only" otherwise.
 - If you are told a limit was reached, give the review from what you have and say in "summary" that it was cut short.`;
 
+/** How this run can reach the protocol expert, when the fleet has one. */
+interface ExpertLink {
+  self: OACPAgent;
+  expertId: string;
+}
+
+/** Trace context of the request that started this review (RFC 008). */
+interface IncomingTrace {
+  traceId: string;
+  callerId?: string;
+  sealed: boolean;
+}
+
+/**
+ * A tool that asks a second agent. The request carries this run's trace ID
+ * and this run's ID as the parent, so the expert's run is recorded as caused
+ * by this one. A trace that arrived sealed is only passed on sealed.
+ */
+function createExpertTool(
+  link: ExpertLink,
+  current: () => { traceId: string; runId?: string; sealed: boolean },
+): AgentTool {
+  return {
+    name: 'ask_protocol_expert',
+    description:
+      'Ask the OACP protocol expert what the OACP specification and RFCs say. Use it only when the correctness of this change depends on a protocol rule (a default, a required field, a status code). Ask one precise question. Costs one step.',
+    inputSchema: {
+      type: 'object',
+      properties: { question: { type: 'string', description: 'One precise question about the OACP protocol' } },
+      required: ['question'],
+    },
+    async run(input) {
+      const question = String(input.question ?? '').slice(0, 2000);
+      if (question.length < 5) throw new Error('question is required');
+      const { traceId, runId, sealed } = current();
+      const mayCarryTrace = !sealed || link.self.isFriend(link.expertId);
+      const reply = await askAgent({
+        from: link.self,
+        toAgentId: link.expertId,
+        action: 'ask',
+        payload: { question },
+        ...(mayCarryTrace ? { trace: { traceId, ...(runId ? { parentId: runId } : {}), sealed } } : {}),
+      });
+      if (!reply.ok) throw new Error(`the protocol expert returned an error: ${String(reply.payload.message ?? reply.payload.error)}`);
+      const citations = Array.isArray(reply.payload.citations)
+        ? (reply.payload.citations as { heading: string; file: string }[]).map((c) => `${c.file} § ${c.heading}`).join('; ')
+        : '';
+      return JSON.stringify({
+        answered: reply.payload.answered,
+        answer: reply.payload.answer,
+        citations,
+        expert_run_id: reply.payload.run_id,
+      });
+    },
+  };
+}
+
 /** Agent review: the model can read the repository at the PR's head commit (review-pr). */
 async function reviewPrWithTools(
   repo: { owner: string; repo: string; sha: string },
@@ -195,19 +254,36 @@ async function reviewPrWithTools(
   title: string,
   context: string,
   focus: string | undefined,
+  incoming: IncomingTrace,
+  expert: ExpertLink | undefined,
 ) {
   const { userPrompt, truncated } = buildUserPrompt(diff, title, context, focus);
   // Recording is on when a store is configured. By default a run that cannot
   // be recorded is stopped (docs/decisions/002-trajectories.md, decision 3).
   const store = storeFromEnv();
   const recorder = store
-    ? createRecorder({ store, mode: modeFromEnv(process.env.PR_REVIEW_TRAJECTORY_MODE) })
+    ? createRecorder({
+        store,
+        mode: modeFromEnv(process.env.PR_REVIEW_TRAJECTORY_MODE),
+        // Adopt the requester's trace; their unit of work is this run's parent.
+        trace: { trace_id: incoming.traceId, parent_run_id: incoming.callerId },
+      })
     : undefined;
+  const tools = createGithubReadTools(repo, process.env.GITHUB_TOKEN);
+  if (expert) {
+    tools.push(
+      createExpertTool(expert, () => ({
+        traceId: incoming.traceId,
+        runId: recorder?.run_id,
+        sealed: incoming.sealed,
+      })),
+    );
+  }
   const run = await runAgent({
     model: MODEL,
     system: AGENT_SYSTEM_PROMPT,
     user: userPrompt,
-    tools: createGithubReadTools(repo, process.env.GITHUB_TOKEN),
+    tools,
     limits: AGENT_LIMITS,
     callModel,
     recorder,
@@ -261,8 +337,17 @@ async function reviewPrWithTools(
 // ============================================================
 
 export function createPrReviewer(): Resident {
+  // Set once the fleet has booted and a protocol expert is in it.
+  let expert: ExpertLink | undefined;
   return {
     name: 'pr-review-agent',
+    init(agent, fleet) {
+      if (process.env.PR_REVIEW_ASK_EXPERT === 'off') return;
+      for (const [name, sibling] of fleet) {
+        const expertId = sibling.getAgentId();
+        if (name.endsWith('oacp-protocol-expert') && expertId) expert = { self: agent, expertId };
+      }
+    },
     capabilities: ['pr-review', 'code-review'],
     description:
       'Reviews GitHub pull requests: public PRs by URL (review-pr), private repos by pasted diff (review-diff — never send tokens). Returns verdict, issues with severity, suggestions, and a summary. Powered by Claude Haiku 4.5.',
@@ -294,7 +379,7 @@ export function createPrReviewer(): Resident {
             required: ['pr_url'],
           },
         },
-        handler: async (payload) => {
+        handler: async (payload, msg) => {
           credentialGuard(payload);
           const prUrl = payload.pr_url as string;
           const focus = payload.focus as string | undefined;
@@ -314,6 +399,8 @@ export function createPrReviewer(): Resident {
             pr.title,
             pr.body.substring(0, 2000),
             focus,
+            continueTrace(msg ?? {}),
+            expert,
           );
           console.log(
             `[pr-review] ${review.review_complete ? '✅' : '⚠️'} Verdict: ${review.verdict} (${review.issues.length} issue(s), ${review.tool_calls} tool call(s), stop: ${review.stop_reason})`,

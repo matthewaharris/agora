@@ -33,8 +33,10 @@ export interface Resident {
   dailyFreeBudget?: number;
   actions: ResidentAction[];
   /** Called after the resident's agent registers — for residents that need
-   * their own agent handle (discovery, proactive sends, timers). */
-  init?: (agent: OACPAgent) => void | Promise<void>;
+   * their own agent handle (discovery, proactive sends, timers). `fleet` is
+   * the residents registered so far in this process, by full name, for
+   * residents that call a sibling. */
+  init?: (agent: OACPAgent, fleet: ReadonlyMap<string, OACPAgent>) => void | Promise<void>;
   /** Called on fleet shutdown; clear timers and background work here. */
   stop?: () => void;
 }

@@ -10,10 +10,12 @@
  */
 import * as path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { digestEvidence, validateAssertions, type Assertion } from 'oacp-sdk';
-import { complete, extractJSON } from '../llm.js';
+import { continueTrace, digestEvidence, validateAssertions, type Assertion } from 'oacp-sdk';
+import { extractJSON } from '../llm.js';
 import { loadCorpus, retrieve, type Chunk, type Hit } from '../retrieval.js';
 import type { Resident } from '../roster.js';
+import { recordedComplete } from '../runtime/single-call.js';
+import { createRecorder, modeFromEnv, storeFromEnv } from '../runtime/trajectory.js';
 
 const MODEL = process.env.FLEET_EXPERT_MODEL || 'claude-haiku-4-5';
 
@@ -105,7 +107,7 @@ export function createProtocolExpert(): Resident {
             required: ['question'],
           },
         },
-        handler: async (payload) => {
+        handler: async (payload, msg) => {
           const question = payload.question as string;
           console.log(`\n[expert] ❓ ${question.slice(0, 120)}`);
 
@@ -122,7 +124,23 @@ export function createProtocolExpert(): Resident {
           const passages = hits
             .map((h, i) => `[${i + 1}] ${h.chunk.file} § "${h.chunk.heading}"\n${h.chunk.text}`)
             .join('\n\n---\n\n');
-          const llm = await complete({
+          // Recorded under the caller's trace when the request carried one
+          // (RFC 008 §4), with the caller's run as this run's parent.
+          const incoming = continueTrace(msg ?? {});
+          const store = storeFromEnv();
+          const recorder = store
+            ? createRecorder({
+                store,
+                mode: modeFromEnv(process.env.EXPERT_TRAJECTORY_MODE),
+                trace: { trace_id: incoming.traceId, parent_run_id: incoming.callerId },
+              })
+            : undefined;
+          const recorded = recorder
+            ? { run_id: recorder.run_id, trace_id: recorder.trace_id }
+            : {};
+          const llm = await recordedComplete({
+            recorder,
+            label: `ask "${question.slice(0, 60)}"`,
             model: MODEL,
             system: SYSTEM_PROMPT,
             maxTokens: 1500,
@@ -142,9 +160,12 @@ export function createProtocolExpert(): Resident {
             ),
           ];
 
+          await recorder?.close();
+
           if (cited.length === 0) {
             console.log('[expert] ⛔ out of corpus (model found no supporting passage)');
             return {
+              ...recorded,
               ...refusal(
                 question,
                 chunks.length,
@@ -174,6 +195,7 @@ export function createProtocolExpert(): Resident {
             answered: true,
             sources_considered: hits.length,
             corpus_chunks: chunks.length,
+            ...recorded,
             model: llm.model,
             tokens_used: llm.tokens_used,
             duration_ms: llm.duration_ms,

@@ -38,11 +38,16 @@ async function query(params) {
 /** One summary row per run, newest first, built from the events that carry run-level facts. */
 async function listRuns() {
   const rows = await query(
-    'select=run_id,trace_id,ts,type,attrs&type=in.(run.started,run.ended,policy.applied)&order=ts.desc&limit=900',
+    'select=run_id,trace_id,parent_run_id,ts,type,attrs&type=in.(run.started,run.ended,policy.applied)&order=ts.desc&limit=900',
   );
   const runs = new Map();
   for (const row of rows) {
-    const run = runs.get(row.run_id) ?? { run_id: row.run_id, trace_id: row.trace_id, ended: false };
+    const run = runs.get(row.run_id) ?? {
+      run_id: row.run_id,
+      trace_id: row.trace_id,
+      parent_run_id: row.parent_run_id ?? null,
+      ended: false,
+    };
     const a = row.attrs ?? {};
     if (row.type === 'run.started') {
       Object.assign(run, { started_at: row.ts, label: a.label ?? null, model: a['gen_ai.request.model'] ?? null });

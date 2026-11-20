@@ -130,7 +130,7 @@ export async function bootFleet(options: FleetOptions = {}): Promise<Fleet> {
     const agentId = await agent.register();
     console.log(`🏠 ${name} registered as ${agentId} (pk ${agent.getPublicKey().slice(0, 16)}…)`);
     agent.startHeartbeat();
-    await resident.init?.(agent);
+    await resident.init?.(agent, agents);
     agents.set(name, agent);
 
     if (residents.length > 1) {
