@@ -2480,6 +2480,9 @@ async function authenticateAgentOrOwner(
   };
 }
 
+/** Most release notifications one accept will push; the rest wait for a poll. */
+const RELEASE_PUSH_LIMIT = 25;
+
 /**
  * POST /contacts/set — accept or block a non-friend sender (RFC 005 §3).
  * Body: { agent_id, sender_agent_id, status: 'accepted' | 'blocked' }
@@ -2539,12 +2542,39 @@ async function handleContactsSet(req: Request): Promise<Response> {
       .eq('recipient_agent_id', body.agent_id as string)
       .eq('sender_agent_id', body.sender_agent_id as string)
       .eq('delivery_status', 'quarantined')
-      .select('message_id');
+      .select('message_id, message_type, correlation_id, created_at');
     if (releaseError) {
       console.error('[OACP] Quarantine release error:', releaseError);
       return errorResponse('Contact saved but releasing held messages failed', 500);
     }
     released = releasedRows?.length ?? 0;
+
+    // RFC 006: the recipient was pushed once, when the message arrived held,
+    // and could not act on it then. Push again now that it is deliverable —
+    // otherwise an accept made by the owner in the dashboard releases a
+    // message the agent never learns about. Oldest first, metadata only.
+    if (releasedRows && releasedRows.length > 0) {
+      const { data: recipient } = await supabase
+        .from('agents')
+        .select('registry_token')
+        .eq('agent_id', body.agent_id)
+        .single();
+      if (recipient?.registry_token) {
+        const oldestFirst = [...releasedRows].sort((a, b) =>
+          String(a.created_at).localeCompare(String(b.created_at))
+        );
+        for (const row of oldestFirst.slice(0, RELEASE_PUSH_LIMIT)) {
+          await pushNotify(body.agent_id as string, recipient.registry_token as string, {
+            message_id: row.message_id,
+            sender_agent_id: body.sender_agent_id,
+            message_type: row.message_type,
+            correlation_id: row.correlation_id ?? null,
+            delivery_status: 'delivered',
+            created_at: row.created_at,
+          });
+        }
+      }
+    }
   }
 
   console.log(
