@@ -12,6 +12,7 @@ import { createCodeReviewer } from './residents/code-review.js';
 import { createTranslator } from './residents/translator.js';
 import { createScribe } from './residents/scribe.js';
 import { createPrReviewer } from './residents/pr-review.js';
+import { createBrainstormPair } from './residents/brainstorm.js';
 
 export interface ResidentAction {
   spec: ActionSpec;
@@ -49,5 +50,7 @@ export function buildRoster(): Resident[] {
     createTranslator(),
     createScribe(),
     createPrReviewer(),
+    // Builder first: the ideator looks for it when it starts.
+    ...createBrainstormPair(),
   ];
 }

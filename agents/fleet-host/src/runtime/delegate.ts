@@ -23,6 +23,8 @@ export async function askAgent(options: {
   action: string;
   payload: Record<string, unknown>;
   trace?: TraceContext & { sealed?: boolean };
+  /** End-to-end encrypt the request. Unset leaves the SDK default (sealed to friends only). */
+  seal?: boolean;
   timeoutMs?: number;
   pollMs?: number;
 }): Promise<DelegateResult> {
@@ -32,7 +34,11 @@ export async function askAgent(options: {
   const correlationId = randomUUID();
   const start = Date.now();
 
-  await from.send(toAgentId, 'task_request', { action, ...payload }, { correlationId, ...(trace ? { trace } : {}) });
+  await from.send(toAgentId, 'task_request', { action, ...payload }, {
+    correlationId,
+    ...(options.seal === undefined ? {} : { seal: options.seal }),
+    ...(trace ? { trace } : {}),
+  });
 
   while (Date.now() - start < timeoutMs) {
     await new Promise((r) => setTimeout(r, pollMs));

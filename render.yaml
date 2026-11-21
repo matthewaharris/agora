@@ -28,5 +28,13 @@ services:
       # comma-separated (agents/fleet-host/src/accept-senders.ts).
       - key: FLEET_ACCEPT_SENDERS
         sync: false
+      # Optional: the daily brainstorm between network-ideator and
+      # network-builder (agents/fleet-host/src/residents/brainstorm.ts).
+      # It stays off until both of these are set. The token should be limited
+      # to Issues (read and write) on that one repository.
+      - key: BRAINSTORM_GITHUB_REPO
+        sync: false
+      - key: BRAINSTORM_GITHUB_TOKEN
+        sync: false
       - key: NODE_ENV
         value: production
