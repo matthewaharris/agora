@@ -16,6 +16,7 @@ import { handleCors, jsonResponse, errorResponse, corsHeaders } from '../_shared
 import { getSupabaseAdmin } from '../_shared/supabase.ts';
 import { verifyDomainOwnerKey } from '../_shared/dns.ts';
 import {
+  canonicalizeDeregistration,
   canonicalizeMessage,
   verifyMessageSignature,
 } from '../_shared/crypto.ts';
@@ -125,6 +126,7 @@ const RATE_LIMITS: Record<string, { window: number; max: number }> = {
   // State-changing endpoints — throttle brute force / abuse
   '/owners/attach': { window: 60, max: 10 },
   '/agents/set-access': { window: 60, max: 20 },
+  '/agents/deregister': { window: 60, max: 10 },
   '/teams/create': { window: 60, max: 10 },
   '/teams/add-member': { window: 60, max: 20 },
   '/webhooks/register': { window: 60, max: 10 },
@@ -880,6 +882,9 @@ async function handleDiscover(req: Request): Promise<Response> {
       'agent_id, name, owner_handle, handle, access_policy, description, endpoint_url, capabilities, status, public_key, protocols_supported, metadata, last_seen_at, created_at, updated_at, owners:owner_id(owner_public_key, handle)',
       { count: 'exact' },
     );
+
+  // RFC 009: a deregistered agent kept as a tombstone is never listed.
+  query = query.neq('status', 'deregistered');
 
   // Apply filters
   if (agentId) {
@@ -1669,6 +1674,82 @@ async function handleFriendPolicy(req: Request): Promise<Response> {
   });
 }
 
+/** How far a deregistration timestamp may be from the registry's clock. */
+const DEREGISTER_WINDOW_MS = 5 * 60 * 1000;
+
+/**
+ * POST /agents/deregister — an agent removes itself (RFC 009).
+ * Body: { agent_id, timestamp, signature }
+ *
+ * Two proofs: the registry token, and an Ed25519 signature by the agent's key
+ * over the canonical deregistration string. The token alone is not enough for
+ * something that cannot be undone.
+ *
+ * The agent is deleted outright unless a registered agent still holds
+ * messages exchanged with it, in which case a tombstone is kept (RFC 009 §3).
+ */
+async function handleDeregister(req: Request): Promise<Response> {
+  let body: Record<string, unknown>;
+  try {
+    body = await req.json();
+  } catch {
+    return errorResponse('Invalid JSON body', 400);
+  }
+
+  const auth = await requireAgentAuth(req, body.agent_id);
+  if ('error' in auth) return auth.error;
+  const agent = auth.agent;
+
+  const { timestamp, signature } = body;
+  if (typeof timestamp !== 'string' || typeof signature !== 'string') {
+    return errorResponse('timestamp and signature are required', 400);
+  }
+  if (!/^[0-9a-f]{128}$/i.test(signature)) {
+    return errorResponse('signature must be a hex-encoded Ed25519 signature', 400);
+  }
+  const signedAt = Date.parse(timestamp);
+  if (!Number.isFinite(signedAt) || Math.abs(Date.now() - signedAt) > DEREGISTER_WINDOW_MS) {
+    return errorResponse('timestamp must be within five minutes of the current time', 400, {
+      error_code: 'timestamp_out_of_window',
+    });
+  }
+
+  const valid = verifyMessageSignature(
+    signature,
+    canonicalizeDeregistration(agent.agent_id as string, timestamp),
+    agent.public_key as string,
+  );
+  if (!valid) {
+    return errorResponse('Invalid deregistration signature', 403, {
+      error_code: 'invalid_signature',
+    });
+  }
+
+  const supabase = getSupabaseAdmin();
+  const { data, error } = await supabase.rpc('oacp_deregister_agent', {
+    p_agent_id: agent.agent_id,
+  });
+  if (error) {
+    console.error('[OACP] Deregistration error:', error);
+    return errorResponse('Failed to deregister agent', 500);
+  }
+
+  const result = (data ?? {}) as { outcome?: string; error?: string };
+  if (result.error === 'not_found') return errorResponse('Agent not found', 404);
+  if (result.error === 'escrow_open') {
+    return errorResponse('A held escrow must be settled or refunded before deregistering', 409, {
+      error_code: 'escrow_open',
+    });
+  }
+
+  console.log(`[OACP] Agent deregistered: ${agent.agent_id} (${agent.name}), ${result.outcome}`);
+  return jsonResponse({
+    deregistered: true,
+    agent_id: agent.agent_id,
+    outcome: result.outcome,
+  });
+}
+
 /**
  * POST /agents/set-access — set this agent's access policy (RFC 002 §3.5).
  * Body: { agent_id, access_policy: 'open' | 'closed' }. Agent auth.
@@ -1794,12 +1875,18 @@ async function handleMessageSend(req: Request): Promise<Response> {
   // Verify recipient exists
   const { data: recipient, error: recipientError } = await supabase
     .from('agents')
-    .select('agent_id, name, access_policy, metadata, registry_token, owner_id')
+    .select('agent_id, name, access_policy, metadata, registry_token, owner_id, status')
     .eq('agent_id', body.recipient_agent_id)
     .single();
 
   if (recipientError || !recipient) {
     return errorResponse('Recipient agent not found', 404);
+  }
+  // RFC 009 §5: the agent left this registry; only its tombstone remains.
+  if (recipient.status === 'deregistered') {
+    return errorResponse('Recipient agent has deregistered', 404, {
+      error_code: 'recipient_deregistered',
+    });
   }
 
   const isSealed = (body.payload as Record<string, unknown> | undefined)?.sealed === true;
@@ -4483,6 +4570,9 @@ const routes: Record<string, Record<string, RouteHandler>> = {
   },
   '/agents/set-access': {
     POST: (req) => handleSetAccess(req),
+  },
+  '/agents/deregister': {
+    POST: (req) => handleDeregister(req),
   },
   '/discover': {
     GET: (req) => handleDiscover(req),

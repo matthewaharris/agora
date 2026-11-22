@@ -11,6 +11,7 @@
 import { mkdirSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { leaveRegistry } from './lib/leave-registry.mjs';
 
 const { OACPAgent, canonicalizeMessage, newTraceId, traceOf } = await import(process.env.OACP_SDK_PATH || 'oacp-sdk');
 if (!newTraceId) throw new Error('This oacp-sdk has no RFC 008 support; set OACP_SDK_PATH to a build that does.');
@@ -105,5 +106,6 @@ try {
   else fail('6. sealed trace', JSON.stringify({ trace_id: got?.trace_id, was_sealed: got?.was_sealed, t }));
 } catch (err) { fail('6. sealed trace', String(err).slice(0, 200)); }
 
+await leaveRegistry([a, b]);
 console.log(`\n${PASS} passed, ${FAIL} failed`);
 process.exit(FAIL ? 1 : 0);

@@ -14,6 +14,7 @@ import { mkdirSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { leaveRegistry } from './lib/leave-registry.mjs';
 
 const ROOT = resolve(fileURLToPath(import.meta.url), '../..');
 process.env.FLEET_CORPUS_ROOT ||= resolve(ROOT, '../oacp');
@@ -67,5 +68,7 @@ try {
   failed = true;
   quiet(`brainstorm failed: ${err.message}`);
 }
+// The ideator goes first: a held brainstorm leaves messages between the two.
+await leaveRegistry([ideator, builder], quiet);
 await fleet.shutdown();
 process.exit(failed ? 1 : 0);

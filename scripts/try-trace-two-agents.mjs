@@ -19,6 +19,7 @@ import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { OACPAgent, newTraceId } from 'oacp-sdk';
+import { leaveRegistry } from './lib/leave-registry.mjs';
 
 const ROOT = resolve(fileURLToPath(import.meta.url), '../..');
 // The expert reads the protocol documents; they live in the oacp repository.
@@ -79,8 +80,8 @@ while (!result && Date.now() < deadline) {
   const { messages } = await requester.getMessages({ direction: 'inbox', correlationId, limit: 5 });
   result = messages.find((m) => m.message_type === 'task_result' || m.message_type === 'task_error');
 }
+await leaveRegistry([requester, reviewer, expert], quiet);
 await fleet.shutdown();
-await requester.shutdown();
 if (!result) {
   console.log('No reply within 4 minutes.');
   process.exit(1);
