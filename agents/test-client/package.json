@@ -7,7 +7,7 @@
     "start": "tsx index.ts"
   },
   "dependencies": {
-    "oacp-sdk": "^0.20.0",
+    "oacp-sdk": "^0.21.0",
     "dotenv": "^16.4.0"
   },
   "devDependencies": {
