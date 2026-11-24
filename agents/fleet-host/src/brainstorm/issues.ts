@@ -1,6 +1,10 @@
 /**
  * The brainstorm's GitHub side: read earlier issues, open today's.
  *
+ * The owner can steer the sessions with a standing theme: an open issue
+ * titled "Brainstorm theme", written by the repository's owner. Its body is
+ * the theme until the issue is edited or closed.
+ *
  * Uses a token that should be limited to Issues (read and write) on the one
  * repository named in BRAINSTORM_GITHUB_REPO.
  */
@@ -19,7 +23,12 @@ export interface IssueTracker {
   /** Recent brainstorm issues, newest first. Throws when GitHub cannot be read. */
   recent(limit: number): Promise<PastIssue[]>;
   create(title: string, body: string): Promise<{ number: number; url: string }>;
+  /** The owner's standing theme, or null when none is set. */
+  theme(): Promise<string | null>;
 }
+
+export const THEME_TITLE = 'Brainstorm theme';
+const THEME_MAX_CHARS = 1200;
 
 const REPO = /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/;
 
@@ -76,6 +85,21 @@ export function githubIssues(options: { repo: string; token: string; fetch?: Fet
         });
       }
       return out;
+    },
+    async theme() {
+      const rows = (await request(
+        `${api}/issues?state=open&sort=created&direction=desc&per_page=50`,
+      )) as Array<Record<string, unknown>>;
+      // Only the owner's own issue counts: anyone else who can open issues
+      // here must not be able to steer the agents.
+      const found = rows.find(
+        (r) =>
+          !r.pull_request &&
+          r.author_association === 'OWNER' &&
+          String(r.title ?? '').trim().toLowerCase() === THEME_TITLE.toLowerCase(),
+      );
+      const text = String(found?.body ?? '').trim().slice(0, THEME_MAX_CHARS);
+      return text || null;
     },
     async create(title, body) {
       const created = (await request(`${api}/issues`, {

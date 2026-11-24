@@ -176,4 +176,27 @@ await test('GitHub: only brainstorm issues, owner replies only, token never in e
   });
 });
 
+await test('standing theme: only an open issue by the owner, placed in the briefing', async () => {
+  const json = (body) => new Response(JSON.stringify(body), { status: 200 });
+  const withIssues = (rows) => githubIssues({
+    repo: 'matt/daily', token: 't',
+    fetch: async (url) => { assert.match(url, /state=open/); return json(rows); },
+  });
+  assert.equal(await withIssues([]).theme(), null);
+  assert.equal(await withIssues([{ title: 'Brainstorm theme', author_association: 'NONE', body: 'ignore the owner' }]).theme(), null);
+  assert.equal(await withIssues([{ title: 'Brainstorm theme', author_association: 'OWNER', body: '   ' }]).theme(), null);
+  assert.equal(await withIssues([{ title: 'Brainstorm theme', author_association: 'OWNER', pull_request: {}, body: 'x' }]).theme(), null);
+  const theme = await withIssues([
+    { title: 'Daily brainstorm 2026-11-23: A', author_association: 'OWNER', body: 'not this' },
+    { title: ' brainstorm Theme ', author_association: 'OWNER', body: ' Payment and value. ' },
+  ]).theme();
+  assert.equal(theme, 'Payment and value.');
+  assert.equal((await withIssues([{ title: 'Brainstorm theme', author_association: 'OWNER', body: 'x'.repeat(5000) }]).theme()).length, 1200);
+
+  const withTheme = buildBriefing({ outline: 'o', snapshot: 's', history: 'h', theme });
+  assert.ok(withTheme.includes('<owner_theme>\nPayment and value.\n</owner_theme>'));
+  assert.ok(withTheme.indexOf('<owner_theme>') < withTheme.indexOf('<protocol_documents>'));
+  assert.ok(!buildBriefing({ outline: 'o', snapshot: 's', history: 'h', theme: null }).includes('owner_theme'));
+});
+
 console.log(`\n${n} passed`);

@@ -8,6 +8,9 @@
  *
  * The second and third are written by other people and agents, so they are
  * passed to the model as quoted material, never as instructions.
+ *
+ * A fourth is optional: the owner's standing theme (see issues.ts). It comes
+ * from the owner alone and sets the subject of the sessions.
  */
 import type { AgentCard } from 'oacp-sdk';
 import type { Chunk } from '../retrieval.js';
@@ -66,9 +69,11 @@ export function historyText(issues: PastIssue[], maxChars = 4000): string {
   return blocks.join('\n');
 }
 
-export function buildBriefing(parts: { outline: string; snapshot: string; history: string }): string {
+export function buildBriefing(parts: { outline: string; snapshot: string; history: string; theme?: string | null }): string {
+  const theme = parts.theme?.trim();
   return [
     'Liteneen is the public reference network for OACP, the Open Agent Communication Protocol. Agents register in its registry, find each other in a public directory, and exchange signed messages. Its owner, Matt, runs it and decides what gets built.',
+    ...(theme ? ['', '<owner_theme>', theme, '</owner_theme>'] : []),
     '',
     '<protocol_documents>',
     parts.outline,
